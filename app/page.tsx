@@ -6,7 +6,7 @@ import ProjectManager from "@/components/ProjectManager";
 import TimeLogList from "@/components/TimeLogList";
 
 export default function Home() {
-  const [editingLog, setEditingLog] = useState<unknown>(null);
+  const [editingLog, setEditingLog] = useState<any>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const triggerRefresh = () => setRefreshTrigger((prev) => prev + 1);
