@@ -1,35 +1,33 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
 // --- Types ---
-
 interface Project {
   id: string;
   name: string;
 }
 
-type TimeEntryMode = 'range' | 'duration';
+type TimeEntryMode = 'range' | 'duration' | 'timer';
 
 interface TimeLogFormProps {
+  projectsList?: Project[];
   editingLog?: {
     id: string;
     date: string;
     project_id: string;
     description: string;
-    remarks?: string;
-    direct_duration?: string;
-    start_time?: string;
-    end_time?: string;
+    remarks?: string | null;
+    direct_duration?: string | null;
+    start_time?: string | null;
+    end_time?: string | null;
   } | null;
   onSuccess?: () => void;
   onCancel?: () => void;
 }
 
-// --- Component ---
-
-export default function TimeLogForm({ editingLog, onSuccess, onCancel }: TimeLogFormProps) {
+export default function TimeLogForm({ projectsList, editingLog, onSuccess, onCancel }: TimeLogFormProps) {
   // 1. Form State
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [projectId, setProjectId] = useState<string>('');
@@ -44,59 +42,216 @@ export default function TimeLogForm({ editingLog, onSuccess, onCancel }: TimeLog
   // Direct Duration Fields
   const [directDuration, setDirectDuration] = useState<string>('');
   
+  // Live Stopwatch States
+  const [timerIsRunning, setTimerIsRunning] = useState<boolean>(false);
+  const [timerElapsed, setTimerElapsed] = useState<number>(0);
+  const [timerStartTimestamp, setTimerStartTimestamp] = useState<number | null>(null);
+  
   // UI & Data State
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [localProjects, setLocalProjects] = useState<Project[]>([]);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const projects = projectsList || localProjects;
+
+  // 2. Fetch Projects on Mount (as fallback if projectsList is not passed)
+  useEffect(() => {
+    if (!projectsList) {
+      async function fetchProjects() {
+        const { data, error: fetchError } = await supabase
+          .from('projects')
+          .select('id, name')
+          .order('name', { ascending: true });
+
+        if (fetchError) {
+          console.error('Error fetching projects:', fetchError);
+          setError('Failed to load projects. Please check your Supabase connection.');
+        } else {
+          setLocalProjects(data || []);
+        }
+      }
+      fetchProjects();
+    }
+  }, [projectsList]);
+
   // Effect to populate form when editingLog changes
   useEffect(() => {
-    const loadEditingData = () => {
-      if (editingLog) {
-        setDate(editingLog.date);
-        setProjectId(editingLog.project_id);
-        setDescription(editingLog.description);
-        setRemarks(editingLog.remarks || '');
-        
-        if (editingLog.direct_duration) {
-          setTimeEntryMode('duration');
-          const hoursMatch = editingLog.direct_duration.match(/(\d+)\s*hours/);
-          const minsMatch = editingLog.direct_duration.match(/(\d+)\s*mins/);
-          const h = hoursMatch ? hoursMatch[1].padStart(1, '0') : '0';
-          const m = minsMatch ? minsMatch[1].padStart(2, '0') : '00';
-          setDirectDuration(`${h}:${m}`);
-        } else {
-          setTimeEntryMode('range');
-          setStartTime(editingLog.start_time ? editingLog.start_time.slice(0, 5) : '');
-          setEndTime(editingLog.end_time ? editingLog.end_time.slice(0, 5) : '');
-        }
-        setError(null);
-        setSuccess(null);
+    if (editingLog) {
+      setDate(editingLog.date);
+      setProjectId(editingLog.project_id);
+      setDescription(editingLog.description);
+      setRemarks(editingLog.remarks || '');
+      
+      if (editingLog.direct_duration) {
+        setTimeEntryMode('duration');
+        const hoursMatch = editingLog.direct_duration.match(/(\d+)\s*hours?/);
+        const minsMatch = editingLog.direct_duration.match(/(\d+)\s*mins?/);
+        const h = hoursMatch ? hoursMatch[1].padStart(1, '0') : '0';
+        const m = minsMatch ? minsMatch[1].padStart(2, '0') : '00';
+        setDirectDuration(`${h}:${m}`);
+      } else {
+        setTimeEntryMode('range');
+        setStartTime(editingLog.start_time ? editingLog.start_time.slice(0, 5) : '');
+        setEndTime(editingLog.end_time ? editingLog.end_time.slice(0, 5) : '');
       }
-    };
-    loadEditingData();
+      setError(null);
+      setSuccess(null);
+    }
   }, [editingLog]);
 
-  // 2. Fetch Projects on Mount
+  // 3. Live Stopwatch Logic
+  // Restore active timer from localStorage on mount
   useEffect(() => {
-    async function fetchProjects() {
-      const { data, error: fetchError } = await supabase
-        .from('projects')
-        .select('id, name')
-        .order('name', { ascending: true });
+    const savedStart = localStorage.getItem('tracker_timer_start');
+    const savedProjectId = localStorage.getItem('tracker_timer_project_id');
+    const savedElapsed = localStorage.getItem('tracker_timer_accumulated_elapsed');
 
-      if (fetchError) {
-        console.error('Error fetching projects:', fetchError);
-        setError('Failed to load projects. Please check your Supabase connection.');
-      } else {
-        setProjects(data || []);
-      }
+    if (savedStart) {
+      const startMs = parseInt(savedStart);
+      const accumulated = savedElapsed ? parseInt(savedElapsed) : 0;
+      setTimerStartTimestamp(startMs);
+      setTimerIsRunning(true);
+      setTimerElapsed(Math.floor((Date.now() - startMs) / 1000) + accumulated);
+      if (savedProjectId) setProjectId(savedProjectId);
+      setTimeEntryMode('timer');
+    } else if (savedElapsed) {
+      setTimerElapsed(parseInt(savedElapsed));
     }
-    fetchProjects();
   }, []);
 
-  // 3. Helpers & Validation
+  // Timer Tick implementation
+  useEffect(() => {
+    if (timerIsRunning && timerStartTimestamp !== null) {
+      const accumulated = parseInt(localStorage.getItem('tracker_timer_accumulated_elapsed') || '0');
+      
+      timerRef.current = setInterval(() => {
+        const elapsedSecs = Math.floor((Date.now() - timerStartTimestamp) / 1000) + accumulated;
+        setTimerElapsed(elapsedSecs);
+        
+        // Update document title dynamically
+        document.title = `⏱️ ${formatSecondsToHMS(elapsedSecs)} | Tracker`;
+      }, 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+      document.title = 'Tracker';
+    }
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [timerIsRunning, timerStartTimestamp]);
+
+  // Page reload warning if timer is running
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (timerIsRunning) {
+        e.preventDefault();
+        e.returnValue = 'You have a running stopwatch. Are you sure you want to leave? Your timer will resume, but unsaved description changes might be lost.';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [timerIsRunning]);
+
+  // Save selected project to localStorage for timer restore
+  useEffect(() => {
+    if (timerIsRunning && projectId) {
+      localStorage.setItem('tracker_timer_project_id', projectId);
+    }
+  }, [projectId, timerIsRunning]);
+
+  // Helper formatting functions
+  const formatSecondsToHMS = (totalSecs: number) => {
+    const h = Math.floor(totalSecs / 3600);
+    const m = Math.floor((totalSecs % 3600) / 60);
+    const s = totalSecs % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const formatSecondsToHM = (totalSecs: number) => {
+    const h = Math.floor(totalSecs / 3600);
+    const m = Math.floor((totalSecs % 3600) / 60);
+    const displayMins = m === 0 && h === 0 && totalSecs > 0 ? 1 : m;
+    return `${h.toString().padStart(1, '0')}:${displayMins.toString().padStart(2, '0')}`;
+  };
+
+  const handleStartTimer = () => {
+    if (!projectId) {
+      setError('Please select a project before starting the timer.');
+      return;
+    }
+    setError(null);
+    const startMs = Date.now();
+    setTimerStartTimestamp(startMs);
+    setTimerIsRunning(true);
+    localStorage.setItem('tracker_timer_start', startMs.toString());
+    localStorage.setItem('tracker_timer_project_id', projectId);
+  };
+
+  const handlePauseTimer = () => {
+    if (timerStartTimestamp !== null) {
+      const currentSessionSecs = Math.floor((Date.now() - timerStartTimestamp) / 1000);
+      const priorAccumulated = parseInt(localStorage.getItem('tracker_timer_accumulated_elapsed') || '0');
+      const totalElapsed = priorAccumulated + currentSessionSecs;
+      
+      setTimerIsRunning(false);
+      setTimerStartTimestamp(null);
+      setTimerElapsed(totalElapsed);
+      
+      localStorage.setItem('tracker_timer_accumulated_elapsed', totalElapsed.toString());
+      localStorage.removeItem('tracker_timer_start');
+    }
+  };
+
+  const handleResumeTimer = () => {
+    setError(null);
+    const startMs = Date.now();
+    setTimerStartTimestamp(startMs);
+    setTimerIsRunning(true);
+    localStorage.setItem('tracker_timer_start', startMs.toString());
+  };
+
+  const handleStopAndFillTimer = () => {
+    let finalElapsed = timerElapsed;
+    if (timerIsRunning && timerStartTimestamp !== null) {
+      const currentSessionSecs = Math.floor((Date.now() - timerStartTimestamp) / 1000);
+      const priorAccumulated = parseInt(localStorage.getItem('tracker_timer_accumulated_elapsed') || '0');
+      finalElapsed = priorAccumulated + currentSessionSecs;
+    }
+    
+    // Stop the timer
+    setTimerIsRunning(false);
+    setTimerStartTimestamp(null);
+    setTimerElapsed(0);
+    
+    // Fill form
+    const formattedDuration = formatSecondsToHM(finalElapsed);
+    setDirectDuration(formattedDuration);
+    setTimeEntryMode('duration');
+    
+    // Cleanup local storage
+    localStorage.removeItem('tracker_timer_start');
+    localStorage.removeItem('tracker_timer_project_id');
+    localStorage.removeItem('tracker_timer_accumulated_elapsed');
+    
+    setSuccess(`Stopwatch recorded ${formatSecondsToHMS(finalElapsed)}. Time automatically filled!`);
+  };
+
+  const handleResetTimer = () => {
+    if (confirm('Are you sure you want to discard the active stopwatch duration?')) {
+      setTimerIsRunning(false);
+      setTimerStartTimestamp(null);
+      setTimerElapsed(0);
+      localStorage.removeItem('tracker_timer_start');
+      localStorage.removeItem('tracker_timer_project_id');
+      localStorage.removeItem('tracker_timer_accumulated_elapsed');
+      setError(null);
+    }
+  };
+
+  // 4. Form Actions & Submission
   const validateDuration = (val: string) => {
     const regex = /^([0-9]{1,2}):([0-5][0-9])$/;
     return regex.test(val);
@@ -109,7 +264,6 @@ export default function TimeLogForm({ editingLog, onSuccess, onCancel }: TimeLog
 
   const validateTimeRange = (start: string, end: string) => {
     if (!start || !end) return false;
-    // Basic string comparison works for HH:MM format
     return start < end;
   };
 
@@ -119,20 +273,21 @@ export default function TimeLogForm({ editingLog, onSuccess, onCancel }: TimeLog
     setStartTime('');
     setEndTime('');
     setDirectDuration('');
-    // Date is NOT cleared per requirements
+    setError(null);
   };
 
-  // 4. Submit Handler
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccess(null);
 
-    // Basic Validation
+    if (timerIsRunning) {
+      return setError('Please stop the running stopwatch before submitting.');
+    }
+
     if (!projectId) return setError('Please select a project.');
     if (!description.trim()) return setError('Task description is required.');
 
-    // Mode-specific validation
     interface TimeLogPayload {
       project_id: string;
       description: string;
@@ -161,7 +316,7 @@ export default function TimeLogForm({ editingLog, onSuccess, onCancel }: TimeLog
       payload.start_time = `${startTime}:00`;
       payload.end_time = `${endTime}:00`;
     } else {
-      if (!directDuration) return setError('Please enter a duration (e.g., 4:30).');
+      if (!directDuration) return setError('Please enter a duration (e.g., 4:30) or use the Live Stopwatch.');
       if (!validateDuration(directDuration)) {
         return setError('Duration must be in HH:MM format (e.g., 4:30 or 0:45).');
       }
@@ -202,33 +357,33 @@ export default function TimeLogForm({ editingLog, onSuccess, onCancel }: TimeLog
   };
 
   return (
-    <div className="max-w-3xl mx-auto p-4 sm:p-6 lg:p-8">
+    <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
       {/* Header */}
-      <div className="mb-8 border-b border-gray-200 pb-4 flex justify-between items-end">
+      <div className="mb-6 flex items-center justify-between border-b border-slate-100 pb-4">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-            <span>📋</span> {editingLog ? 'Edit Time Log' : 'Project Time Log Dashboard'}
-          </h1>
-          <p className="mt-2 text-sm text-gray-500 font-medium">
-            Date Context: <span className="text-sky-600 bg-sky-50 px-2 py-1 rounded">{date}</span>
+          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+            <span>{editingLog ? '✍️' : '⏱️'}</span> {editingLog ? 'Edit Time Log' : 'Log Time Entry'}
+          </h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {editingLog ? 'Update your selected task entry' : 'Log project hours or start a new stopwatch'}
           </p>
         </div>
         {editingLog && (
           <button 
             type="button"
             onClick={onCancel}
-            className="text-sm font-bold text-gray-500 hover:text-gray-700 bg-gray-100 px-4 py-2 rounded-lg transition-colors"
+            className="rounded-lg bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-all cursor-pointer"
           >
-            Cancel Editing
+            Cancel Edit
           </button>
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6 bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-        {/* Sticky Date Context Picker */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {/* Date & Project Row */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <label htmlFor="date" className="block text-sm font-semibold text-gray-700 mb-2">
+            <label htmlFor="date" className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
               Logging Date
             </label>
             <input
@@ -236,24 +391,23 @@ export default function TimeLogForm({ editingLog, onSuccess, onCancel }: TimeLog
               id="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-gray-900 focus:ring-2 focus:ring-sky-600 focus:border-sky-600 outline-none transition-all"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm text-slate-800 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition-all"
               required
             />
           </div>
 
-          {/* Relational Dropdown */}
           <div>
-            <label htmlFor="project" className="block text-sm font-semibold text-gray-700 mb-2">
+            <label htmlFor="project" className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
               Project
             </label>
             <select
               id="project"
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-gray-900 focus:ring-2 focus:ring-sky-600 focus:border-sky-600 outline-none transition-all bg-white"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm text-slate-800 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition-all cursor-pointer"
               required
             >
-              <option value="">Select an active project</option>
+              <option value="">Select a project</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
@@ -263,128 +417,212 @@ export default function TimeLogForm({ editingLog, onSuccess, onCancel }: TimeLog
 
         {/* Task Description */}
         <div>
-          <label htmlFor="description" className="block text-sm font-semibold text-gray-700 mb-2">
+          <label htmlFor="description" className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
             Task Description
           </label>
           <input
             type="text"
             id="description"
-            placeholder="What did you work on?"
+            placeholder="Describe what you worked on..."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-gray-900 focus:ring-2 focus:ring-sky-600 focus:border-sky-600 outline-none transition-all"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm text-slate-800 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition-all"
             required
           />
         </div>
 
-        {/* Polymorphic Time Entry Controller */}
+        {/* Time Entry Switcher */}
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-3">
-            Time Entry Mode
+          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+            Tracking Mode
           </label>
-          <div className="flex p-1 bg-gray-100 rounded-lg w-full max-w-sm mb-4">
+          <div className="flex rounded-xl bg-slate-100 p-1 w-full max-w-md">
             <button
               type="button"
               onClick={() => setTimeEntryMode('range')}
-              className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${
+              className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                 timeEntryMode === 'range' 
                   ? 'bg-white text-sky-700 shadow-sm' 
-                  : 'text-gray-500 hover:text-gray-700'
+                  : 'text-slate-500 hover:text-slate-800'
               }`}
             >
-              Use Time Range
+              🕒 Time Range
             </button>
             <button
               type="button"
               onClick={() => setTimeEntryMode('duration')}
-              className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${
+              className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                 timeEntryMode === 'duration' 
                   ? 'bg-white text-sky-700 shadow-sm' 
-                  : 'text-gray-500 hover:text-gray-700'
+                  : 'text-slate-500 hover:text-slate-800'
               }`}
             >
-              Enter Direct Duration
+              ✍️ Manual
+            </button>
+            <button
+              type="button"
+              onClick={() => setTimeEntryMode('timer')}
+              className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                timeEntryMode === 'timer' 
+                  ? 'bg-white text-sky-700 shadow-sm' 
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              ⏱️ Stopwatch
             </button>
           </div>
 
-          {timeEntryMode === 'range' ? (
-            <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-1 duration-200">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">Start Time</label>
+          <div className="mt-4 min-h-[90px] rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
+            {timeEntryMode === 'range' && (
+              <div className="grid grid-cols-2 gap-4 animate-in fade-in duration-200">
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-widest text-slate-400 mb-1">Start Time</label>
+                  <input
+                    type="time"
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-sky-500 focus:ring-1 focus:ring-sky-100 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-widest text-slate-400 mb-1">End Time</label>
+                  <input
+                    type="time"
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-sky-500 focus:ring-1 focus:ring-sky-100 outline-none"
+                  />
+                </div>
+              </div>
+            )}
+
+            {timeEntryMode === 'duration' && (
+              <div className="animate-in fade-in duration-200">
+                <label className="block text-[10px] font-extrabold uppercase tracking-widest text-slate-400 mb-1">Duration (HH:MM)</label>
                 <input
-                  type="time"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:ring-2 focus:ring-sky-600 outline-none"
+                  type="text"
+                  placeholder="e.g. 4:30 or 0:45"
+                  value={directDuration}
+                  onChange={(e) => setDirectDuration(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-sky-500 focus:ring-1 focus:ring-sky-100 outline-none placeholder-slate-300"
                 />
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">End Time</label>
-                <input
-                  type="time"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:ring-2 focus:ring-sky-600 outline-none"
-                />
+            )}
+
+            {timeEntryMode === 'timer' && (
+              <div className="flex flex-col items-center justify-center py-2 animate-in fade-in duration-200">
+                <div className="flex items-center gap-3">
+                  {timerIsRunning && (
+                    <span className="flex h-3.5 w-3.5 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-red-500"></span>
+                    </span>
+                  )}
+                  <span className="font-mono text-3xl font-black tracking-wider text-slate-900 tabular-nums">
+                    {formatSecondsToHMS(timerElapsed)}
+                  </span>
+                </div>
+
+                <div className="flex gap-2.5 mt-4">
+                  {!timerIsRunning ? (
+                    timerElapsed === 0 ? (
+                      <button
+                        type="button"
+                        onClick={handleStartTimer}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold px-4 py-2 rounded-xl shadow-sm active:scale-95 transition-all cursor-pointer"
+                      >
+                        Start Timer
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleResumeTimer}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold px-4 py-2 rounded-xl shadow-sm active:scale-95 transition-all cursor-pointer"
+                        >
+                          Resume
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleStopAndFillTimer}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold px-4 py-2 rounded-xl shadow-sm active:scale-95 transition-all cursor-pointer"
+                        >
+                          Stop & Log
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleResetTimer}
+                          className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-extrabold px-4 py-2 rounded-xl active:scale-95 transition-all cursor-pointer"
+                        >
+                          Reset
+                        </button>
+                      </>
+                    )
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handlePauseTimer}
+                        className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold px-4 py-2 rounded-xl shadow-sm active:scale-95 transition-all cursor-pointer"
+                      >
+                        Pause
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleStopAndFillTimer}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold px-4 py-2 rounded-xl shadow-sm active:scale-95 transition-all cursor-pointer"
+                      >
+                        Stop & Log
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="animate-in fade-in slide-in-from-top-1 duration-200">
-              <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">Duration (HH:MM)</label>
-              <input
-                type="text"
-                placeholder="e.g. 4:30"
-                value={directDuration}
-                onChange={(e) => setDirectDuration(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:ring-2 focus:ring-sky-600 outline-none"
-              />
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        {/* Remarks */}
+        {/* Remarks / Blockers */}
         <div>
-          <label htmlFor="remarks" className="block text-sm font-semibold text-gray-700 mb-2">
-            Remarks / Blockers
+          <label htmlFor="remarks" className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+            Remarks / Blockers (Optional)
           </label>
           <textarea
             id="remarks"
-            rows={3}
-            placeholder="Extra context, ticket references, or blockers..."
+            rows={2}
+            placeholder="Any extra details, ticket numbers, or project blockers..."
             value={remarks}
             onChange={(e) => setRemarks(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-gray-900 focus:ring-2 focus:ring-sky-600 focus:border-sky-600 outline-none transition-all resize-none"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2 text-sm text-slate-800 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition-all resize-none"
           />
         </div>
 
-        {/* Notifications */}
+        {/* Messaging Panels */}
         {error && (
-          <div className="p-4 bg-red-50 border-l-4 border-red-500 text-red-700 text-sm animate-in fade-in duration-200">
-            <p className="font-bold">Error</p>
-            <p>{error}</p>
+          <div className="rounded-xl bg-rose-50 border-l-4 border-rose-500 p-3.5 text-xs text-rose-700 font-semibold animate-in fade-in duration-200">
+            {error}
           </div>
         )}
 
         {success && (
-          <div className="p-4 bg-emerald-50 border-l-4 border-emerald-500 text-emerald-700 text-sm animate-in fade-in duration-200">
-            <p className="font-bold">Success</p>
-            <p>{success}</p>
+          <div className="rounded-xl bg-emerald-50 border-l-4 border-emerald-500 p-3.5 text-xs text-emerald-700 font-semibold animate-in fade-in duration-200">
+            {success}
           </div>
         )}
 
-        {/* Submit Button */}
+        {/* Submit Log Button */}
         <button
           type="submit"
-          disabled={isSubmitting}
-          className={`w-full py-3 px-6 rounded-lg font-bold text-white transition-all shadow-md active:scale-[0.98] ${
-            isSubmitting 
-              ? 'bg-gray-400 cursor-not-allowed' 
+          disabled={isSubmitting || timerIsRunning}
+          className={`w-full py-3 px-6 rounded-xl font-bold text-sm text-white transition-all shadow-md cursor-pointer ${
+            isSubmitting || timerIsRunning
+              ? 'bg-slate-300 cursor-not-allowed shadow-none' 
               : editingLog 
-                ? 'bg-amber-500 hover:bg-amber-600 focus:ring-4 focus:ring-amber-200'
-                : 'bg-sky-600 hover:bg-sky-700 focus:ring-4 focus:ring-sky-200'
+                ? 'bg-amber-500 hover:bg-amber-600 active:scale-[0.98]'
+                : 'bg-sky-600 hover:bg-sky-700 active:scale-[0.98]'
           }`}
         >
-          {isSubmitting ? 'Processing...' : editingLog ? 'Update Log Entry' : 'Submit Log Entry'}
+          {isSubmitting ? 'Logging...' : editingLog ? 'Update Time Log' : 'Submit Time Log'}
         </button>
       </form>
     </div>
