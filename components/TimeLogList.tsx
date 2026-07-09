@@ -61,7 +61,7 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
 
           if (logsRes.data) setLocalLogs(logsRes.data);
           if (projectsRes.data) setLocalProjects(projectsRes.data);
-        } catch (err: any) {
+        } catch (err: unknown) {
           console.error("Error fetching data locally:", err);
           setError("Failed to load time logs. Check database connection.");
         } finally {
@@ -124,7 +124,7 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
 
       // Notify parent
       if (onLogsChange) onLogsChange();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Delete error:", err);
       setError("Failed to delete log entry. Please try again.");
     }

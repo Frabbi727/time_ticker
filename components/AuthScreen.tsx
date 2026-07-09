@@ -54,9 +54,10 @@ export default function AuthScreen() {
         if (signInError) throw signInError;
         setMessage('Welcome back! Logging you in...');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Authentication error:', err);
-      setError(err.message || 'An unexpected authentication error occurred.');
+      const errorMessage = err instanceof Error ? err.message : 'An unexpected authentication error occurred.';
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }

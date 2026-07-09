@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
+import { Session } from "@supabase/supabase-js";
 import TimeLogForm from "@/components/TimeLogForm";
 import TimeLogList from "@/components/TimeLogList";
 import ProjectManager from "@/components/ProjectManager";
@@ -26,7 +27,7 @@ interface TimeLog {
 }
 
 export default function Home() {
-  const [session, setSession] = useState<any>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
 
   const [activeTab, setActiveTab] = useState<"tracker" | "explorer" | "projects">("tracker");
@@ -56,9 +57,11 @@ export default function Home() {
   // 2. Centralized data fetching (Only runs when session exists)
   useEffect(() => {
     if (!session) {
-      setLogs([]);
-      setProjects([]);
-      setIsLoading(false);
+      Promise.resolve().then(() => {
+        setLogs([]);
+        setProjects([]);
+        setIsLoading(false);
+      });
       return;
     }
 
@@ -358,6 +361,7 @@ export default function Home() {
               <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
                 <div className="lg:col-span-2">
                   <TimeLogForm
+                    key={editingLog?.id || "new"}
                     editingLog={editingLog}
                     projectsList={projects}
                     onSuccess={() => {
@@ -401,7 +405,7 @@ export default function Home() {
                   <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-6">
                     <h4 className="text-xs font-extrabold uppercase tracking-wider text-sky-800">Pro-Tip</h4>
                     <p className="mt-2 text-xs text-sky-700 leading-relaxed">
-                      Use the **Live Stopwatch** in the logger form to track your working hours in real-time. The timer will automatically sync to your browser tab and survive page reloads!
+                      Use the **quick presets** (e.g. 30m, 1h) or **increment buttons** (+15m, +30m) to quickly log or adjust your duration in minutes with a single click!
                     </p>
                   </div>
                 </div>

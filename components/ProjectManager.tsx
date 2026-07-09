@@ -42,7 +42,7 @@ export default function ProjectManager({ projectsList, onProjectsChange }: Proje
 
       if (fetchError) throw fetchError;
       setLocalProjects(data || []);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error fetching projects locally:", err);
       setError('Failed to fetch projects. Check your database connection.');
     } finally {

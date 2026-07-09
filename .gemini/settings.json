@@ -3,6 +3,10 @@
     "supabase": {
       "url": "https://mcp.supabase.com/mcp?project_ref=rwzfhcpwbmujsprnuvpb&read_only=true&features=docs%2Cdatabase%2Caccount%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching%2Cstorage",
       "type": "http"
+    },
+    "vercel": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://mcp.vercel.com"]
     }
   }
 }
