@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import TimeLogForm from "@/components/TimeLogForm";
 import TimeLogList from "@/components/TimeLogList";
 import ProjectManager from "@/components/ProjectManager";
+import AuthScreen from "@/components/AuthScreen";
 
 // --- Types ---
 interface Project {
@@ -25,6 +26,9 @@ interface TimeLog {
 }
 
 export default function Home() {
+  const [session, setSession] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+
   const [activeTab, setActiveTab] = useState<"tracker" | "explorer" | "projects">("tracker");
   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
   const [logs, setLogs] = useState<TimeLog[]>([]);
@@ -34,8 +38,30 @@ export default function Home() {
 
   const triggerRefresh = () => setRefreshTrigger((prev) => prev + 1);
 
-  // Centralized data fetching
+  // 1. Subscribe to User Session
   useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setAuthLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setAuthLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // 2. Centralized data fetching (Only runs when session exists)
+  useEffect(() => {
+    if (!session) {
+      setLogs([]);
+      setProjects([]);
+      setIsLoading(false);
+      return;
+    }
+
     async function fetchData() {
       setIsLoading(true);
       try {
@@ -53,7 +79,7 @@ export default function Home() {
       }
     }
     fetchData();
-  }, [refreshTrigger]);
+  }, [refreshTrigger, session]);
 
   // helper function to parse duration from a log entry into total minutes
   const parseLogMinutes = (log: TimeLog): number => {
@@ -158,6 +184,31 @@ export default function Home() {
       });
   }, [logs, projects]);
 
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+  };
+
+  // 3. Render Authentication Loading State
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50/50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-sky-600 border-t-transparent"></div>
+          <p className="text-sm font-semibold text-slate-500">Checking credentials...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 4. Render Authentication Screen if Session is Null
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-slate-50/50">
+        <AuthScreen />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50/50 text-slate-800 antialiased">
       {/* Top Banner Header */}
@@ -175,49 +226,68 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Navigation Tabs */}
-          <nav className="flex space-x-1 rounded-xl bg-slate-100 p-1">
-            <button
-              onClick={() => setActiveTab("tracker")}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === "tracker"
-                  ? "bg-white text-sky-700 shadow-sm"
-                  : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
-              }`}
-            >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Track Time
-            </button>
-            <button
-              onClick={() => setActiveTab("explorer")}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === "explorer"
-                  ? "bg-white text-sky-700 shadow-sm"
-                  : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
-              }`}
-            >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-              </svg>
-              Logs Explorer
-            </button>
-            <button
-              onClick={() => setActiveTab("projects")}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === "projects"
-                  ? "bg-white text-sky-700 shadow-sm"
-                  : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
-              }`}
-            >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              Projects
-            </button>
-          </nav>
+          {/* Navigation Tabs & Profile Actions */}
+          <div className="flex items-center gap-4">
+            <nav className="flex space-x-1 rounded-xl bg-slate-100 p-1">
+              <button
+                onClick={() => setActiveTab("tracker")}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === "tracker"
+                    ? "bg-white text-sky-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
+                }`}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Track Time
+              </button>
+              <button
+                onClick={() => setActiveTab("explorer")}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === "explorer"
+                    ? "bg-white text-sky-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
+                }`}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                </svg>
+                Logs Explorer
+              </button>
+              <button
+                onClick={() => setActiveTab("projects")}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === "projects"
+                    ? "bg-white text-sky-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
+                }`}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Projects
+              </button>
+            </nav>
+
+            {/* Profile Dropdown / Sign Out */}
+            <div className="flex items-center gap-3 border-l border-slate-100 pl-4">
+              <div className="hidden md:block text-right">
+                <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Logged In</span>
+                <span className="block text-xs font-bold text-slate-700 max-w-[120px] truncate">{session.user.email}</span>
+              </div>
+              <button
+                onClick={handleSignOut}
+                className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-500 hover:bg-rose-50 hover:border-rose-100 hover:text-rose-600 transition-all shadow-sm active:scale-95 cursor-pointer"
+                title="Sign Out"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
