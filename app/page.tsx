@@ -11,6 +11,8 @@ import PunchCard from "@/components/PunchCard";
 import AttendanceExplorer from "@/components/AttendanceExplorer";
 import AdminDashboard from "@/components/AdminDashboard";
 import AdminConsole from "@/components/AdminConsole";
+import SprintTracker from "@/components/SprintTracker";
+import TeamManager from "@/components/TeamManager";
 
 // --- Types ---
 interface Project {
@@ -35,7 +37,7 @@ export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
 
-  const [activeTab, setActiveTab] = useState<"tracker" | "explorer" | "projects" | "attendance" | "admin_dashboard">("tracker");
+  const [activeTab, setActiveTab] = useState<"tracker" | "explorer" | "projects" | "attendance" | "admin_dashboard" | "sprints" | "team">("tracker");
   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -378,6 +380,34 @@ export default function Home() {
                 </svg>
                 My Attendance
               </button>
+              <button
+                onClick={() => setActiveTab("sprints")}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === "sprints"
+                    ? "bg-white text-sky-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
+                }`}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                Sprint Tracker
+              </button>
+              {userRole === "ba" && (
+                <button
+                  onClick={() => setActiveTab("team")}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+                    activeTab === "team"
+                      ? "bg-white text-sky-700 shadow-sm"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
+                  }`}
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                  Team Manager
+                </button>
+              )}
             </nav>
 
             {/* Profile Dropdown / Sign Out */}
@@ -551,6 +581,26 @@ export default function Home() {
             {/* Tab 4: Attendance Explorer */}
             {activeTab === "attendance" && (
               <AttendanceExplorer isAdmin={false} />
+            )}
+
+            {/* Tab 5: Sprint Tracker */}
+            {activeTab === "sprints" && (
+              <SprintTracker
+                role={userRole}
+                projects={projects}
+                teamUsers={teamUsers}
+                currentUserId={session.user.id}
+                onRefresh={triggerRefresh}
+              />
+            )}
+
+            {/* Tab 6: Team Manager (For BAs) */}
+            {activeTab === "team" && userRole === "ba" && (
+              <TeamManager
+                teamUsers={teamUsers}
+                onProfilesChange={triggerRefresh}
+                role={userRole}
+              />
             )}
           </div>
         )}

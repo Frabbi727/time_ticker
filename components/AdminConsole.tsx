@@ -6,6 +6,7 @@ import AttendanceExplorer from './AttendanceExplorer';
 import TimeLogList from './TimeLogList';
 import ProjectManager from './ProjectManager';
 import TeamManager from './TeamManager';
+import SprintTracker from './SprintTracker';
 
 interface AdminConsoleProps {
   userName: string;
@@ -19,11 +20,12 @@ interface AdminConsoleProps {
   triggerRefresh: () => void;
 }
 
-type AdminTab = "dashboard" | "attendance" | "explorer" | "projects" | "team";
+type AdminTab = "dashboard" | "attendance" | "explorer" | "projects" | "team" | "sprints";
 
 export default function AdminConsole({
   userName,
   userPin,
+  session,
   handleSignOut,
   logs,
   teamUsers,
@@ -152,6 +154,21 @@ export default function AdminConsole({
             </svg>
             Team Manager
           </button>
+
+          {/* Tab 6: Sprint Tracker */}
+          <button
+            onClick={() => setActiveTab("sprints")}
+            className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "sprints"
+                ? "bg-sky-600 text-white shadow-sm shadow-sky-600/10"
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            Sprint Tracker
+          </button>
         </nav>
 
         {/* Sidebar Footer - Sign Out */}
@@ -180,6 +197,7 @@ export default function AdminConsole({
               {activeTab === "explorer" && "Work Logs"}
               {activeTab === "projects" && "Project Settings"}
               {activeTab === "team" && "Team Management"}
+              {activeTab === "sprints" && "Sprint Tracker"}
             </h1>
           </div>
 
@@ -237,6 +255,16 @@ export default function AdminConsole({
               <TeamManager
                 teamUsers={teamUsers}
                 onProfilesChange={triggerRefresh}
+              />
+            )}
+
+            {activeTab === "sprints" && (
+              <SprintTracker
+                role="admin"
+                projects={projects}
+                teamUsers={teamUsers}
+                currentUserId={session?.user?.id}
+                onRefresh={triggerRefresh}
               />
             )}
           </div>

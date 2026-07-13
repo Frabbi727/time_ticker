@@ -14,9 +14,10 @@ interface TeamMember {
 interface TeamManagerProps {
   teamUsers: TeamMember[];
   onProfilesChange: () => void;
+  role?: string;
 }
 
-export default function TeamManager({ teamUsers, onProfilesChange }: TeamManagerProps) {
+export default function TeamManager({ teamUsers, onProfilesChange, role: viewerRole = 'admin' }: TeamManagerProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [name, setName] = useState('');
@@ -31,10 +32,11 @@ export default function TeamManager({ teamUsers, onProfilesChange }: TeamManager
   // Filter team members based on search query
   const filteredMembers = useMemo(() => {
     return teamUsers.filter(member => {
+      if (viewerRole !== 'admin' && member.role === 'admin') return false;
       const query = searchTerm.toLowerCase();
       return member.name.toLowerCase().includes(query) || member.pin.includes(query);
     });
-  }, [teamUsers, searchTerm]);
+  }, [teamUsers, searchTerm, viewerRole]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,17 +110,19 @@ export default function TeamManager({ teamUsers, onProfilesChange }: TeamManager
           <h2 className="text-xl font-black text-slate-900 tracking-tight text-left">Team Management Center</h2>
           <p className="text-xs text-slate-400 mt-1 text-left">Create, view, and manage employee profiles and system credentials</p>
         </div>
-        <div>
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs px-4 py-3 shadow-md hover:shadow-sky-100 active:scale-[0.98] transition-all cursor-pointer"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Register New Member
-          </button>
-        </div>
+        {viewerRole === 'admin' && (
+          <div>
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center gap-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs px-4 py-3 shadow-md hover:shadow-sky-100 active:scale-[0.98] transition-all cursor-pointer"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Register New Member
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Main Members Grid/Table */}
