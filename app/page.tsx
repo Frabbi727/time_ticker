@@ -36,8 +36,40 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [userName, setUserName] = useState<string>("");
 
   const triggerRefresh = () => setRefreshTrigger((prev) => prev + 1);
+
+  // Fetch user profile name when session changes
+  useEffect(() => {
+    if (!session) {
+      setUserName("");
+      return;
+    }
+
+    async function fetchProfile() {
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("name")
+          .single();
+
+        if (error) {
+          console.warn("Could not fetch profile, using user metadata:", error);
+          // Fallback to metadata or email prefix
+          const metaName = session?.user?.user_metadata?.name;
+          const emailPrefix = session?.user?.email?.split("@")[0] || "User";
+          setUserName(metaName || emailPrefix);
+        } else if (data) {
+          setUserName(data.name);
+        }
+      } catch (err) {
+        console.error("Error fetching user profile:", err);
+      }
+    }
+
+    fetchProfile();
+  }, [session]);
 
   // 1. Subscribe to User Session
   useEffect(() => {
@@ -278,7 +310,9 @@ export default function Home() {
             <div className="flex items-center gap-3 border-l border-slate-100 pl-4">
               <div className="hidden md:block text-right">
                 <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Logged In</span>
-                <span className="block text-xs font-bold text-slate-700 max-w-[120px] truncate">{session.user.email}</span>
+                <span className="block text-xs font-bold text-slate-700 max-w-[150px] truncate" title={userName || session.user.email || ""}>
+                  {userName || session.user.email}
+                </span>
               </div>
               <button
                 onClick={handleSignOut}
