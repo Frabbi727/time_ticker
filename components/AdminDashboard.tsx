@@ -16,6 +16,7 @@ interface TimeLog {
   start_time: string | null;
   end_time: string | null;
   direct_duration: string | null;
+  category?: string;
   projects?: Project;
   userName?: string;
   userPin?: string;
@@ -40,6 +41,7 @@ interface AdminDashboardProps {
 
 export default function AdminDashboard({ logs, teamUsers, todayAttendance, projects }: AdminDashboardProps) {
   const [selectedUserFilter, setSelectedUserFilter] = useState<string>('');
+  const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'working' | 'completed' | 'offline'>('all');
 
@@ -67,8 +69,8 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
       const hoursMatch = log.direct_duration.match(/(\d+)\s*hours?/);
       const minsMatch = log.direct_duration.match(/(\d+)\s*mins?/);
       let mins = 0;
-      if (hoursMatch) mins += parseInt(hoursMatch[1]) * 60;
-      if (minsMatch) mins += parseInt(minsMatch[1]);
+      if (hoursMatch) mins += parseInt(hoursMatch[1], 10) * 60;
+      if (minsMatch) mins += parseInt(minsMatch[1], 10);
       return mins;
     } else if (log.start_time && log.end_time) {
       const start = new Date(`1970-01-01T${log.start_time}`);
@@ -185,9 +187,10 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
     return logs.filter(log => {
       const isToday = log.date === todayStr;
       const matchesUser = !selectedUserFilter || log.userPin === selectedUserFilter;
-      return isToday && matchesUser;
+      const matchesProject = !selectedProjectFilter || log.project_id === selectedProjectFilter;
+      return isToday && matchesUser && matchesProject;
     });
-  }, [logs, selectedUserFilter, todayStr]);
+  }, [logs, selectedUserFilter, selectedProjectFilter, todayStr]);
 
   const filteredTodayAttendance = useMemo(() => {
     const profilesMap = new Map(teamUsers.map(u => [u.id, u]));
@@ -233,12 +236,17 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
       let lastTaskProject = '';
       
       const userTodayLogs = logs.filter(l => l.userPin === user.pin && l.date === todayStr);
+      
+      // Calculate minutes for project filter if active, otherwise overall
       userTodayLogs.forEach(l => {
-        minutesToday += parseLogMinutes(l);
+        if (!selectedProjectFilter || l.project_id === selectedProjectFilter) {
+          minutesToday += parseLogMinutes(l);
+        }
       });
 
-      if (userTodayLogs.length > 0) {
-        const lastLog = userTodayLogs[0];
+      // Find the last task (optionally matching project filter)
+      const lastLog = userTodayLogs.find(l => !selectedProjectFilter || l.project_id === selectedProjectFilter);
+      if (lastLog) {
         lastTaskDesc = lastLog.description;
         lastTaskProject = lastLog.projects?.name || 'General';
       }
@@ -255,63 +263,72 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
         lastTaskProject
       };
     });
-  }, [teamUsers, todayAttendance, logs, todayStr]);
+  }, [teamUsers, todayAttendance, logs, todayStr, selectedProjectFilter]);
 
   const filteredWorkforce = useMemo(() => {
     return workforceDetails.filter(w => {
       const matchesSearch = w.name.toLowerCase().includes(searchTerm.toLowerCase()) || w.pin.includes(searchTerm);
       const matchesStatus = statusFilter === 'all' || w.status === statusFilter;
       const matchesGlobalFilter = !selectedUserFilter || w.pin === selectedUserFilter;
-      return matchesSearch && matchesStatus && matchesGlobalFilter;
+      
+      // Filter out users who haven't logged any time on the selected project if project filter is active
+      const matchesProject = !selectedProjectFilter || logs.some(l => l.userPin === w.pin && l.date === todayStr && l.project_id === selectedProjectFilter);
+      
+      return matchesSearch && matchesStatus && matchesGlobalFilter && matchesProject;
     });
-  }, [workforceDetails, searchTerm, statusFilter, selectedUserFilter]);
+  }, [workforceDetails, searchTerm, statusFilter, selectedUserFilter, selectedProjectFilter, logs, todayStr]);
 
   return (
-    <div className="space-y-8">
-      {/* 1. Header & Quick Filter Panel */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
+    <div className="space-y-8 animate-in fade-in duration-300">
+      {/* 1. Header Banner */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-slate-100 pb-5">
         <div>
-          <h2 className="text-xl font-black text-slate-900 tracking-tight">Super Admin Dashboard</h2>
-          <p className="text-xs text-slate-400 mt-1">Real-time overview of attendance, active tracking, and task activities</p>
+          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+            <span>📊</span> Live Workforce Dashboard
+          </h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Overview metrics, active shifts, project allocations, and employee status tracking
+          </p>
         </div>
-        <div>
-          <select
-            value={selectedUserFilter}
-            onChange={(e) => setSelectedUserFilter(e.target.value)}
-            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all cursor-pointer shadow-sm"
-          >
-            <option value="">All Team Members</option>
-            {teamUsers.map(u => (
-              <option key={u.id} value={u.pin}>{u.name} ({u.pin})</option>
-            ))}
-          </select>
-        </div>
+        
+        {/* Global Filters Clear Info */}
+        {(selectedUserFilter || selectedProjectFilter) && (
+          <div className="mt-3 md:mt-0 flex flex-wrap gap-2 items-center">
+            {selectedUserFilter && (
+              <span className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-1 rounded-lg">
+                User PIN: {selectedUserFilter}
+                <button onClick={() => setSelectedUserFilter('')} className="hover:text-indigo-900 text-xs font-black cursor-pointer ml-1">×</button>
+              </span>
+            )}
+            {selectedProjectFilter && (
+              <span className="inline-flex items-center gap-1 bg-sky-50 border border-sky-100 text-sky-700 text-[10px] font-bold px-2 py-1 rounded-lg">
+                Project Filter Active
+                <button onClick={() => setSelectedProjectFilter('')} className="hover:text-sky-900 text-xs font-black cursor-pointer ml-1">×</button>
+              </span>
+            )}
+            <button 
+              onClick={() => { setSelectedUserFilter(''); setSelectedProjectFilter(''); }}
+              className="text-[10px] text-slate-500 hover:text-slate-700 font-extrabold uppercase tracking-wider ml-1 underline cursor-pointer"
+            >
+              Clear All Filters
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* 2. Visual Metric Cards Section */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        {/* Attendance Rate */}
+      {/* 2. Top Summary KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* Live Attendance Rate */}
         <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Attendance Rate</span>
-            <span className="text-3xl font-black text-slate-800 block">{attendanceRate}%</span>
-            <span className="text-[10px] font-semibold text-slate-400">{todayAttendance.length} of {teamUsers.length} logged in</span>
+            <span className="text-3xl font-black text-sky-600 block">{attendanceRate}%</span>
+            <span className="text-[10px] font-semibold text-slate-400">Punched in / Team size</span>
           </div>
-          <div className="relative h-14 w-14">
-            <svg className="h-full w-full -rotate-90">
-              <circle cx="28" cy="28" r="24" className="stroke-slate-100" strokeWidth="4" fill="transparent" />
-              <circle
-                cx="28"
-                cy="28"
-                r="24"
-                className="stroke-sky-600 transition-all duration-500"
-                strokeWidth="4"
-                fill="transparent"
-                strokeDasharray="150"
-                strokeDashoffset={150 - (150 * attendanceRate) / 100}
-              />
+          <div className="h-12 w-12 rounded-full bg-sky-50 flex items-center justify-center text-sky-600">
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span className="absolute inset-0 flex items-center justify-center text-[10px] font-extrabold text-sky-800">{attendanceRate}%</span>
           </div>
         </div>
 
@@ -392,8 +409,20 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
 
         {/* Chart B: Project Time Allocation Doughnut Chart */}
         <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-900">Today's Project Allocation</h3>
-          <p className="text-xs text-slate-400 mt-0.5">Distribution of logged minutes across projects</p>
+          <div className="flex items-center justify-between border-b border-slate-50 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Today's Project Allocation</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Distribution of logged minutes across projects</p>
+            </div>
+            {selectedProjectFilter && (
+              <button
+                onClick={() => setSelectedProjectFilter('')}
+                className="text-[9px] font-extrabold text-sky-600 hover:text-sky-800 uppercase tracking-wider bg-sky-50 px-2 py-1 rounded-lg transition-all cursor-pointer"
+              >
+                Reset Filter
+              </button>
+            )}
+          </div>
           
           {projectAllocationData.dataset.length === 0 ? (
             <div className="flex h-48 flex-col items-center justify-center text-center">
@@ -402,27 +431,32 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
           ) : (
             <div className="mt-6 flex flex-col sm:flex-row items-center justify-around gap-6">
               <div className="relative h-36 w-36">
-                <svg viewBox="0 0 120 120" className="h-full w-full">
+                <svg viewBox="0 0 120 120" className="h-full w-full animate-in zoom-in duration-300">
                   <circle cx="60" cy="60" r="50" fill="transparent" className="stroke-slate-100" strokeWidth="12" />
-                  {doughnutSegments.map((segment, idx) => (
-                    <circle
-                      key={idx}
-                      cx="60"
-                      cy="60"
-                      r="50"
-                      fill="transparent"
-                      stroke={segment.color}
-                      strokeWidth="12"
-                      strokeDasharray="314.159"
-                      strokeDashoffset={segment.strokeOffset}
-                      style={{
-                        transformOrigin: '60px 60px',
-                        transform: `rotate(${segment.rotation - 90}deg)`
-                      }}
-                    />
-                  ))}
+                  {doughnutSegments.map((segment, idx) => {
+                    const isSelected = selectedProjectFilter === segment.id;
+                    return (
+                      <circle
+                        key={idx}
+                        cx="60"
+                        cy="60"
+                        r="50"
+                        fill="transparent"
+                        stroke={segment.color}
+                        strokeWidth={isSelected ? 16 : 12}
+                        strokeDasharray="314.159"
+                        strokeDashoffset={segment.strokeOffset}
+                        onClick={() => setSelectedProjectFilter(isSelected ? '' : segment.id)}
+                        className="cursor-pointer transition-all hover:opacity-80"
+                        style={{
+                          transformOrigin: '60px 60px',
+                          transform: `rotate(${segment.rotation - 90}deg)`
+                        }}
+                      />
+                    );
+                  })}
                 </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                   <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">Total</span>
                   <span className="text-base font-black text-slate-800">
                     {Math.round(projectAllocationData.totalMinutes / 60)}h
@@ -431,15 +465,26 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
               </div>
 
               <div className="space-y-2 max-w-[200px] w-full">
-                {projectAllocationData.dataset.map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between text-xs font-semibold">
-                    <div className="flex items-center gap-2 truncate">
-                      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-                      <span className="text-slate-600 truncate">{item.name}</span>
-                    </div>
-                    <span className="text-slate-800 pl-2 font-bold shrink-0">{item.percentage}%</span>
-                  </div>
-                ))}
+                {projectAllocationData.dataset.map((item, idx) => {
+                  const isSelected = selectedProjectFilter === item.id;
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedProjectFilter(isSelected ? '' : item.id)}
+                      className={`flex items-center justify-between text-xs font-semibold w-full text-left p-1.5 rounded-xl transition-all cursor-pointer ${
+                        isSelected 
+                          ? 'bg-slate-100 ring-2 ring-sky-500/20 shadow-sm' 
+                          : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                        <span className="text-slate-600 truncate">{item.name}</span>
+                      </div>
+                      <span className="text-slate-800 pl-2 font-bold shrink-0">{item.percentage}%</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -454,6 +499,15 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
             <p className="text-xs text-slate-400 mt-0.5">Real-time mapping of attendance, shifts, and logged project details</p>
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-3">
+            {selectedUserFilter && (
+              <button
+                onClick={() => setSelectedUserFilter('')}
+                className="text-[9px] font-extrabold text-indigo-600 hover:text-indigo-800 uppercase tracking-wider bg-indigo-50 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer"
+              >
+                Clear User Filter
+              </button>
+            )}
+            
             {/* Search */}
             <input
               type="text"
@@ -491,9 +545,18 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
               const progressPct = Math.min((w.minutesToday / 480) * 100, 100);
               const hrs = Math.floor(w.minutesToday / 60);
               const mins = Math.round(w.minutesToday % 60);
+              const isSelected = selectedUserFilter === w.pin;
 
               return (
-                <div key={w.id} className="rounded-2xl border border-slate-100 bg-slate-50/30 p-5 hover:bg-white hover:shadow-md transition-all duration-300 flex flex-col justify-between gap-4">
+                <div 
+                  key={w.id} 
+                  onClick={() => setSelectedUserFilter(isSelected ? '' : w.pin)}
+                  className={`rounded-2xl border p-5 hover:bg-white hover:shadow-md transition-all duration-300 flex flex-col justify-between gap-4 cursor-pointer ${
+                    isSelected 
+                      ? 'border-indigo-500 bg-white ring-2 ring-indigo-500/20 shadow-md scale-[1.01]' 
+                      : 'border-slate-100 bg-slate-50/30'
+                  }`}
+                >
                   {/* Card Header: Profile Info & Status */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">

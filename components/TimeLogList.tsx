@@ -18,6 +18,7 @@ interface TimeLog {
   start_time: string | null;
   end_time: string | null;
   direct_duration: string | null;
+  category?: string;
   projects?: Project;
   userName?: string;
   userPin?: string;
@@ -40,6 +41,7 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
 
   // Filters
   const [filterProject, setFilterProject] = useState<string>('');
+  const [filterCategory, setFilterCategory] = useState<string>('');
   const [filterStartDate, setFilterStartDate] = useState<string>('');
   const [filterEndDate, setFilterEndDate] = useState<string>('');
   const [searchText, setSearchText] = useState<string>('');
@@ -87,6 +89,7 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
   const filteredLogs = useMemo(() => {
     return logs.filter(log => {
       const matchesProject = !filterProject || log.project_id === filterProject;
+      const matchesCategory = !filterCategory || (log.category || 'Development') === filterCategory;
       const matchesStart = !filterStartDate || log.date >= filterStartDate;
       const matchesEnd = !filterEndDate || log.date <= filterEndDate;
       
@@ -96,11 +99,12 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
         (log.remarks && log.remarks.toLowerCase().includes(searchLower)) ||
         (log.projects?.name && log.projects.name.toLowerCase().includes(searchLower)) ||
         (log.userName && log.userName.toLowerCase().includes(searchLower)) ||
-        (log.userPin && log.userPin.toLowerCase().includes(searchLower));
+        (log.userPin && log.userPin.toLowerCase().includes(searchLower)) ||
+        (log.category && log.category.toLowerCase().includes(searchLower));
 
-      return matchesProject && matchesStart && matchesEnd && matchesSearch;
+      return matchesProject && matchesCategory && matchesStart && matchesEnd && matchesSearch;
     });
-  }, [logs, filterProject, filterStartDate, filterEndDate, searchText]);
+  }, [logs, filterProject, filterCategory, filterStartDate, filterEndDate, searchText]);
 
   // 4. Calculate total hours for filtered logs
   const totalHours = useMemo(() => {
@@ -109,8 +113,8 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
       if (log.direct_duration) {
         const hoursMatch = log.direct_duration.match(/(\d+)\s*hours?/);
         const minsMatch = log.direct_duration.match(/(\d+)\s*mins?/);
-        if (hoursMatch) totalMinutes += parseInt(hoursMatch[1]) * 60;
-        if (minsMatch) totalMinutes += parseInt(minsMatch[1]);
+        if (hoursMatch) totalMinutes += parseInt(hoursMatch[1], 10) * 60;
+        if (minsMatch) totalMinutes += parseInt(minsMatch[1], 10);
       } else if (log.start_time && log.end_time) {
         const start = new Date(`1970-01-01T${log.start_time}`);
         const end = new Date(`1970-01-01T${log.end_time}`);
@@ -145,13 +149,14 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
     }
     
     const headers = isAdmin
-      ? ['User Name', 'PIN', 'Date', 'Project', 'Description', 'Duration', 'Remarks']
-      : ['Date', 'Project', 'Description', 'Duration', 'Remarks'];
+      ? ['User Name', 'PIN', 'Date', 'Project', 'Category', 'Description', 'Duration', 'Remarks']
+      : ['Date', 'Project', 'Category', 'Description', 'Duration', 'Remarks'];
 
     const rows = filteredLogs.map(log => {
       const baseFields = [
         `"${log.date}"`,
         `"${log.projects?.name || 'Unknown Project'}"`,
+        `"${log.category || 'Development'}"`,
         `"${log.description.replace(/"/g, '""')}"`,
         `"${log.direct_duration || `${log.start_time?.slice(0, 5)} - ${log.end_time?.slice(0, 5)}`}"`,
         `"${(log.remarks || '').replace(/"/g, '""')}"`
@@ -183,6 +188,7 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
 
   const handleClearFilters = () => {
     setFilterProject('');
+    setFilterCategory('');
     setFilterStartDate('');
     setFilterEndDate('');
     setSearchText('');
@@ -240,13 +246,13 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
       )}
 
       {/* Advanced Filter Toolbar */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 bg-slate-50/50 rounded-2xl border border-slate-100 p-4 mb-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5 bg-slate-50/50 rounded-2xl border border-slate-100 p-4 mb-6">
         <div>
-          <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider">Search Tasks / Users</label>
+          <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider">Search Tasks</label>
           <div className="relative">
             <input
               type="text"
-              placeholder={isAdmin ? "Search task, project, user..." : "Search description/remarks..."}
+              placeholder={isAdmin ? "Search description..." : "Search description/remarks..."}
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
               className="w-full text-xs rounded-xl border border-slate-200 bg-white pl-8 pr-3 py-2 text-slate-800 focus:border-sky-500 focus:ring-1 focus:ring-sky-100 outline-none transition-all placeholder-slate-300"
@@ -272,6 +278,23 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
         </div>
 
         <div>
+          <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider">Category</label>
+          <select 
+            value={filterCategory} 
+            onChange={(e) => setFilterCategory(e.target.value)}
+            className="w-full text-xs rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-800 focus:border-sky-500 outline-none cursor-pointer"
+          >
+            <option value="">All Categories</option>
+            <option value="Development">Development</option>
+            <option value="Design">Design</option>
+            <option value="Meeting">Meeting</option>
+            <option value="Code Review">Code Review</option>
+            <option value="QA">QA / Testing</option>
+            <option value="Support">Support / Ops</option>
+          </select>
+        </div>
+
+        <div>
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider">From Date</label>
           <input 
             type="date" 
@@ -293,7 +316,7 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
       </div>
 
       {/* Clear Filter Indicator */}
-      {(filterProject || filterStartDate || filterEndDate || searchText) && (
+      {(filterProject || filterCategory || filterStartDate || filterEndDate || searchText) && (
         <div className="flex justify-between items-center bg-sky-50/50 border border-sky-100 rounded-xl px-4 py-2 mb-6">
           <p className="text-xs text-sky-800 font-semibold">
             Active filters are reducing the records shown below.
@@ -328,9 +351,14 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
               <div key={log.id} className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-slate-400">{log.date}</span>
-                  <span className="bg-sky-50 border border-sky-100 text-sky-700 px-2 py-0.5 rounded-lg text-[10px] font-bold">
-                    {log.projects?.name || 'N/A'}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="bg-sky-50 border border-sky-100 text-sky-700 px-2 py-0.5 rounded-lg text-[10px] font-bold">
+                      {log.projects?.name || 'N/A'}
+                    </span>
+                    <span className="bg-slate-100 border border-slate-200 text-slate-600 px-2 py-0.5 rounded-lg text-[10px] font-extrabold">
+                      {log.category || 'Development'}
+                    </span>
+                  </div>
                 </div>
                 
                 {isAdmin && (
@@ -379,6 +407,7 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
                   <th className="py-3.5 px-2">Date</th>
                   {isAdmin && <th className="py-3.5 px-2">Team Member</th>}
                   <th className="py-3.5 px-2">Project</th>
+                  <th className="py-3.5 px-2">Category</th>
                   <th className="py-3.5 px-2">Description</th>
                   <th className="py-3.5 px-2 text-center">Duration</th>
                   <th className="py-3.5 px-2 text-right">Actions</th>
@@ -397,6 +426,11 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
                     <td className="py-4 px-2">
                       <span className="inline-block bg-sky-50 border border-sky-100 text-sky-700 px-2 py-1 rounded-lg text-[10px] font-bold max-w-[120px] truncate">
                         {log.projects?.name || 'N/A'}
+                      </span>
+                    </td>
+                    <td className="py-4 px-2">
+                      <span className="inline-block bg-slate-100 border border-slate-200 text-slate-600 px-2.5 py-0.5 rounded-lg text-[10px] font-extrabold whitespace-nowrap">
+                        {log.category || 'Development'}
                       </span>
                     </td>
                     <td className="py-4 px-2 text-xs text-slate-800">

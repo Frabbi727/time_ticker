@@ -11,6 +11,7 @@ interface Project {
 
 interface TimeLogFormProps {
   projectsList?: Project[];
+  existingLogs?: any[];
   editingLog?: {
     id: string;
     date: string;
@@ -20,6 +21,7 @@ interface TimeLogFormProps {
     direct_duration?: string | null;
     start_time?: string | null;
     end_time?: string | null;
+    category?: string;
   } | null;
   onSuccess?: () => void;
   onCancel?: () => void;
@@ -35,12 +37,16 @@ const parseDurationToMinutes = (durationStr: string): number => {
   return totalMins;
 };
 
-export default function TimeLogForm({ projectsList, editingLog, onSuccess, onCancel }: TimeLogFormProps) {
+export default function TimeLogForm({ projectsList, existingLogs, editingLog, onSuccess, onCancel }: TimeLogFormProps) {
   // 1. Form State
   const [date, setDate] = useState<string>(() => editingLog?.date || new Date().toISOString().split('T')[0]);
   const [projectId, setProjectId] = useState<string>(() => editingLog?.project_id || '');
   const [description, setDescription] = useState<string>(() => editingLog?.description || '');
   const [remarks, setRemarks] = useState<string>(() => editingLog?.remarks || '');
+  const [category, setCategory] = useState<string>(() => editingLog?.category || 'Development');
+
+  // Attendance checking state
+  const [dateAttendance, setDateAttendance] = useState<any[]>([]);
   
   // Logged Duration State (in minutes)
   const [directDuration, setDirectDuration] = useState<string>(() => {
@@ -86,6 +92,44 @@ export default function TimeLogForm({ projectsList, editingLog, onSuccess, onCan
     }
   }, [projectsList]);
 
+  // Fetch selected date's attendance logs (to cross-check logged hours)
+  useEffect(() => {
+    async function fetchDateAttendance() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        
+        const { data, error: fetchError } = await supabase
+          .from('attendance')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('date', date);
+
+        if (!fetchError && data) {
+          setDateAttendance(data);
+        }
+      } catch (err) {
+        console.error('Error fetching date attendance:', err);
+      }
+    }
+    fetchDateAttendance();
+  }, [date]);
+
+  // Compute total logged time for selected date (excluding current edit log)
+  const loggedMinutesForDate = (existingLogs || [])
+    .filter(log => log.date === date && log.id !== editingLog?.id)
+    .reduce((total, log) => total + parseDurationToMinutes(log.direct_duration || ''), 0);
+
+  // Compute total punched attendance time for selected date (including incomplete shifts as up to now)
+  const attendanceMinutesForDate = dateAttendance.reduce((total, record) => {
+    if (record.punch_in) {
+      const end = record.punch_out ? new Date(record.punch_out) : new Date();
+      const diff = end.getTime() - new Date(record.punch_in).getTime();
+      return total + Math.floor(diff / 60000);
+    }
+    return total;
+  }, 0);
+
   // 3. Form Actions & Submission
   const formatDurationToInterval = (minutes: number) => {
     const hours = Math.floor(minutes / 60);
@@ -97,6 +141,7 @@ export default function TimeLogForm({ projectsList, editingLog, onSuccess, onCan
     setDescription('');
     setRemarks('');
     setDirectDuration('');
+    setCategory('Development');
     setError(null);
   };
 
@@ -113,6 +158,18 @@ export default function TimeLogForm({ projectsList, editingLog, onSuccess, onCan
       return setError('Please enter a valid duration in minutes.');
     }
 
+    // Soft-alignment check
+    const currentEntryMins = durationMinutes;
+    const newTotalMins = loggedMinutesForDate + currentEntryMins;
+    if (attendanceMinutesForDate > 0 && newTotalMins > attendanceMinutesForDate) {
+      const proceed = confirm(
+        `Warning: You are attempting to log more total task hours (${(newTotalMins / 60).toFixed(1)}h) than your punched attendance hours (${(attendanceMinutesForDate / 60).toFixed(1)}h) for this date.\n\nWould you like to proceed anyway?`
+      );
+      if (!proceed) {
+        return;
+      }
+    }
+
     interface TimeLogPayload {
       project_id: string;
       description: string;
@@ -121,6 +178,7 @@ export default function TimeLogForm({ projectsList, editingLog, onSuccess, onCan
       start_time: string | null;
       end_time: string | null;
       direct_duration: string | null;
+      category: string;
     }
 
     const payload: TimeLogPayload = {
@@ -131,6 +189,7 @@ export default function TimeLogForm({ projectsList, editingLog, onSuccess, onCan
       start_time: null,
       end_time: null,
       direct_duration: formatDurationToInterval(durationMinutes),
+      category,
     };
 
     setIsSubmitting(true);
@@ -192,6 +251,9 @@ export default function TimeLogForm({ projectsList, editingLog, onSuccess, onCan
     setError(null);
   };
 
+  const currentDurationInputMins = parseInt(directDuration, 10) || 0;
+  const currentTotalLoggedMins = loggedMinutesForDate + currentDurationInputMins;
+
   return (
     <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
       {/* Header */}
@@ -216,8 +278,8 @@ export default function TimeLogForm({ projectsList, editingLog, onSuccess, onCan
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Date & Project Row */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {/* Date & Hours Alignment Row */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 items-end">
           <div>
             <label htmlFor="date" className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
               Logging Date
@@ -232,6 +294,37 @@ export default function TimeLogForm({ projectsList, editingLog, onSuccess, onCan
             />
           </div>
 
+          <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-3 text-xs flex flex-col justify-center h-[46px] min-h-[46px]">
+            {attendanceMinutesForDate === 0 ? (
+              <span className="text-rose-600 font-bold flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse"></span>
+                No attendance punched for this date
+              </span>
+            ) : (
+              <div className="space-y-1">
+                <div className="flex justify-between font-bold text-slate-600 text-[10px] tracking-wide">
+                  <span>HOURS ALIGNMENT</span>
+                  <span className={currentTotalLoggedMins > attendanceMinutesForDate ? 'text-rose-600 font-extrabold' : 'text-emerald-600'}>
+                    {(currentTotalLoggedMins / 60).toFixed(1)}h / {(attendanceMinutesForDate / 60).toFixed(1)}h
+                  </span>
+                </div>
+                <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+                  <div 
+                    style={{ width: `${Math.min((currentTotalLoggedMins / attendanceMinutesForDate) * 100, 100)}%` }}
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      currentTotalLoggedMins > attendanceMinutesForDate 
+                        ? 'bg-rose-500' 
+                        : 'bg-emerald-500'
+                    }`}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Project & Category Row */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="project" className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
               Project
@@ -247,6 +340,26 @@ export default function TimeLogForm({ projectsList, editingLog, onSuccess, onCan
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="category" className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+              Task Category
+            </label>
+            <select
+              id="category"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm text-slate-800 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition-all cursor-pointer"
+              required
+            >
+              <option value="Development">Development</option>
+              <option value="Design">Design</option>
+              <option value="Meeting">Meeting</option>
+              <option value="Code Review">Code Review</option>
+              <option value="QA">QA / Testing</option>
+              <option value="Support">Support / Ops</option>
             </select>
           </div>
         </div>

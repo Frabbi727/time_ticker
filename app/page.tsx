@@ -27,6 +27,7 @@ interface TimeLog {
   start_time: string | null;
   end_time: string | null;
   direct_duration: string | null;
+  category?: string;
   projects?: Project;
 }
 
@@ -462,6 +463,7 @@ export default function Home() {
                     key={editingLog?.id || "new"}
                     editingLog={editingLog}
                     projectsList={projects}
+                    existingLogs={logs}
                     onSuccess={() => {
                       setEditingLog(null);
                       triggerRefresh();
