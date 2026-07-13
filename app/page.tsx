@@ -286,6 +286,19 @@ export default function Home() {
     );
   }
 
+  const getFriendlyRoleName = (r: string) => {
+    switch (r) {
+      case 'admin': return 'System Admin';
+      case 'software_engineer': return 'Software Engineer';
+      case 'ba': return 'Business Analyst';
+      case 'project_manager': return 'Project Manager';
+      case 'designer': return 'UI/UX Designer';
+      case 'qa': return 'QA Engineer';
+      case 'devops': return 'DevOps';
+      default: return 'Regular Employee';
+    }
+  };
+
   if (userRole === "admin") {
     return (
       <AdminConsole
@@ -370,8 +383,13 @@ export default function Home() {
             {/* Profile Dropdown / Sign Out */}
             <div className="flex items-center gap-3 border-l border-slate-100 pl-4">
               <div className="hidden md:block text-right">
-                <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Logged In</span>
-                <span className="block text-xs font-bold text-slate-700 max-w-[150px] truncate" title={userName || session.user.email || ""}>
+                <div className="flex items-center gap-1.5 justify-end">
+                  <span className="inline-flex items-center rounded bg-slate-100 px-1.5 py-0.2 text-[8px] font-extrabold text-slate-500 border border-slate-200 uppercase tracking-wider">
+                    {getFriendlyRoleName(userRole)}
+                  </span>
+                  <span className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">Logged In</span>
+                </div>
+                <span className="block text-xs font-bold text-slate-700 max-w-[150px] truncate mt-0.5" title={userName || session.user.email || ""}>
                   {userName || session.user.email}
                 </span>
               </div>

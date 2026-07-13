@@ -184,10 +184,18 @@ export default function AdminConsole({
           </div>
 
           {/* Quick Stats Header Summary */}
-          <div className="flex items-center gap-6 text-xs font-bold text-slate-600">
+          <div className="flex items-center gap-4 text-xs font-bold text-slate-600">
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-150 rounded-xl px-3 py-1.5">
               <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
               <span>{activeStaff} staff online today</span>
+            </div>
+            <div className="flex items-center gap-2 border-l border-slate-100 pl-4 h-8">
+              <span className="inline-flex items-center rounded-md bg-indigo-50 px-1.5 py-0.2 text-[8px] font-extrabold text-indigo-700 border border-indigo-100 uppercase tracking-wider">
+                System Admin
+              </span>
+              <span className="text-xs text-slate-700 max-w-[120px] truncate" title={userName || ""}>
+                {userName || "Admin"}
+              </span>
             </div>
           </div>
         </header>
