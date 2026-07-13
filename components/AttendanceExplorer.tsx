@@ -5,16 +5,26 @@ import { supabase } from '@/lib/supabase';
 
 interface AttendanceRecord {
   id: string;
+  user_id: string;
   date: string;
   punch_in: string;
   punch_out: string | null;
   created_at: string;
 }
 
-export default function AttendanceExplorer() {
-  const [logs, setLogs] = useState<AttendanceRecord[]>([]);
+interface JoinedAttendanceRecord extends AttendanceRecord {
+  userName: string;
+  userPin: string;
+}
+
+interface AttendanceExplorerProps {
+  isAdmin: boolean;
+}
+
+export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps) {
+  const [logs, setLogs] = useState<JoinedAttendanceRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [selectedLog, setSelectedLog] = useState<AttendanceRecord | null>(null);
+  const [selectedLog, setSelectedLog] = useState<JoinedAttendanceRecord | null>(null);
   
   // Filtering state
   const [filterMonth, setFilterMonth] = useState<string>(() => {
@@ -33,18 +43,35 @@ export default function AttendanceExplorer() {
   const [editPunchOut, setEditPunchOut] = useState<string>('');
   const [editLoading, setEditLoading] = useState<boolean>(false);
 
-  // 1. Fetch all attendance logs
+  // 1. Fetch all attendance logs and join with profile information in Javascript
   const fetchLogs = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const { data, error: fetchError } = await supabase
+      // Fetch attendance logs
+      const { data: logsData, error: fetchError } = await supabase
         .from('attendance')
         .select('*')
         .order('date', { ascending: false });
 
       if (fetchError) throw fetchError;
-      setLogs(data || []);
+
+      // Fetch profiles to map names and PINs
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, name, pin');
+
+      if (profilesError) throw profilesError;
+
+      const profilesMap = new Map(profilesData?.map(p => [p.id, p]) || []);
+
+      const joined: JoinedAttendanceRecord[] = (logsData || []).map(log => ({
+        ...log,
+        userName: profilesMap.get(log.user_id)?.name || 'Unknown User',
+        userPin: profilesMap.get(log.user_id)?.pin || 'N/A'
+      }));
+
+      setLogs(joined);
     } catch (err: unknown) {
       console.error('Error fetching attendance logs:', err);
       setError('Failed to fetch attendance history.');
@@ -129,7 +156,6 @@ export default function AttendanceExplorer() {
       const punchInIso = combineDateAndTime(editDate, editPunchIn);
       const punchOutIso = editPunchOut ? combineDateAndTime(editDate, editPunchOut) : null;
 
-      // Simple validation: check if punch out is after punch in
       if (punchOutIso && new Date(punchOutIso) <= new Date(punchInIso)) {
         throw new Error('Punch Out time must be after Punch In time.');
       }
@@ -147,11 +173,15 @@ export default function AttendanceExplorer() {
 
       if (updateError) throw updateError;
       
-      // Update local states
-      setSelectedLog(data);
+      const updatedLog: JoinedAttendanceRecord = {
+        ...data,
+        userName: selectedLog.userName,
+        userPin: selectedLog.userPin
+      };
+
+      setSelectedLog(updatedLog);
       setIsEditing(false);
       
-      // Refresh list
       await fetchLogs();
     } catch (err: unknown) {
       console.error('Error updating attendance record:', err);
@@ -171,18 +201,37 @@ export default function AttendanceExplorer() {
   const downloadCSV = () => {
     if (filteredLogs.length === 0) return;
 
-    const headers = ['Date', 'Day', 'Punch In', 'Punch Out', 'Duration', 'Status'];
+    // Define CSV headers (include User/PIN if Admin)
+    const headers = isAdmin
+      ? ['User Name', 'PIN', 'Date', 'Day', 'Punch In', 'Punch Out', 'Duration', 'Status']
+      : ['Date', 'Day', 'Punch In', 'Punch Out', 'Duration', 'Status'];
+    
+    // Format rows
     const rows = filteredLogs.map(log => {
       const durationStr = log.punch_out ? getShiftDuration(log.punch_in, log.punch_out) : 'N/A';
       const status = log.punch_out ? 'Completed' : 'Active';
-      return [
-        log.date,
-        getDayName(log.date),
-        formatTime(log.punch_in),
-        log.punch_out ? formatTime(log.punch_out) : 'N/A',
-        durationStr,
-        status
-      ];
+      
+      if (isAdmin) {
+        return [
+          log.userName,
+          log.userPin,
+          log.date,
+          getDayName(log.date),
+          formatTime(log.punch_in),
+          log.punch_out ? formatTime(log.punch_out) : 'N/A',
+          durationStr,
+          status
+        ];
+      } else {
+        return [
+          log.date,
+          getDayName(log.date),
+          formatTime(log.punch_in),
+          log.punch_out ? formatTime(log.punch_out) : 'N/A',
+          durationStr,
+          status
+        ];
+      }
     });
 
     const csvContent = [
@@ -205,8 +254,14 @@ export default function AttendanceExplorer() {
       {/* Header Panel */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
         <div>
-          <h2 className="text-xl font-black text-slate-900 tracking-tight">Attendance Explorer</h2>
-          <p className="text-xs text-slate-400 mt-1">View, inspect, and export your historical attendance logs</p>
+          <h2 className="text-xl font-black text-slate-900 tracking-tight">
+            {isAdmin ? 'System Attendance Explorer (Admin)' : 'Attendance Explorer'}
+          </h2>
+          <p className="text-xs text-slate-400 mt-1">
+            {isAdmin 
+              ? 'View, filter, edit, and export attendance logs for all registered users'
+              : 'View, inspect, and export your historical attendance logs'}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <input
@@ -246,7 +301,9 @@ export default function AttendanceExplorer() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Table List View (2 Cols) */}
         <div className="lg:col-span-2 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm overflow-hidden">
-          <h3 className="text-sm font-bold text-slate-900 mb-4">Historical Logs ({filteredLogs.length})</h3>
+          <h3 className="text-sm font-bold text-slate-900 mb-4">
+            {isAdmin ? 'All User Logs' : 'My Historical Logs'} ({filteredLogs.length})
+          </h3>
           
           {isLoading ? (
             <div className="flex h-64 flex-col items-center justify-center gap-3">
@@ -263,6 +320,7 @@ export default function AttendanceExplorer() {
               <table className="w-full text-left text-sm text-slate-700">
                 <thead>
                   <tr className="border-b border-slate-100 text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                    {isAdmin && <th className="pb-3 font-semibold">User</th>}
                     <th className="pb-3 font-semibold">Date</th>
                     <th className="pb-3 font-semibold">Day</th>
                     <th className="pb-3 font-semibold">In</th>
@@ -285,6 +343,12 @@ export default function AttendanceExplorer() {
                           isSelected ? 'bg-sky-50/30' : ''
                         }`}
                       >
+                        {isAdmin && (
+                          <td className="py-3.5 pr-2">
+                            <div className="font-bold text-slate-800 truncate max-w-[120px]">{log.userName}</div>
+                            <div className="text-[10px] font-semibold text-slate-400">PIN: {log.userPin}</div>
+                          </td>
+                        )}
                         <td className="py-3.5 font-bold text-slate-800">{log.date}</td>
                         <td className="py-3.5 text-slate-500">{getDayName(log.date)}</td>
                         <td className="py-3.5 font-medium">{formatTime(log.punch_in)}</td>
@@ -323,6 +387,13 @@ export default function AttendanceExplorer() {
               {isEditing ? (
                 /* --- EDITING MODE PANEL --- */
                 <div className="space-y-5">
+                  {isAdmin && (
+                    <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 text-xs">
+                      <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">User Profile</span>
+                      <span className="block font-bold text-slate-800 mt-0.5">{selectedLog.userName} (PIN: {selectedLog.userPin})</span>
+                    </div>
+                  )}
+
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Shift Date</label>
                     <input
@@ -352,7 +423,6 @@ export default function AttendanceExplorer() {
                       placeholder="Shift not ended yet"
                       className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
                     />
-                    <p className="text-[10px] text-slate-400 font-medium">Leave blank if the shift is currently active.</p>
                   </div>
 
                   <div className="pt-2 flex gap-3">
@@ -397,6 +467,10 @@ export default function AttendanceExplorer() {
                   {/* Specific timestamps */}
                   <div className="space-y-4 text-xs font-semibold text-slate-600">
                     <div className="flex justify-between items-center py-2 border-b border-slate-50">
+                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Logged By</span>
+                      <span className="text-slate-800 font-bold">{selectedLog.userName} (PIN: {selectedLog.userPin})</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
                       <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Punch In Time</span>
                       <span className="text-slate-800 font-bold">{formatTime(selectedLog.punch_in)}</span>
                     </div>
@@ -433,7 +507,7 @@ export default function AttendanceExplorer() {
                   <div className="rounded-2xl bg-sky-50/30 border border-sky-100 p-4">
                     <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-sky-800">Shift Notes</h4>
                     <p className="mt-1 text-xs text-sky-700 leading-relaxed font-semibold">
-                      This shift was logged securely via your pre-registered PIN profile.
+                      This shift was logged securely via registered user authentication.
                     </p>
                   </div>
                 </div>

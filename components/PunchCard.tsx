@@ -32,9 +32,13 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
     setIsLoading(true);
     setError(null);
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
       const { data, error: fetchError } = await supabase
         .from('attendance')
         .select('*')
+        .eq('user_id', user.id)
         .eq('date', dateStr)
         .maybeSingle();
 
@@ -51,9 +55,13 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
   // 2. Fetch recent attendance history (last 10 records)
   const fetchAttendanceHistory = async () => {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
       const { data, error: fetchError } = await supabase
         .from('attendance')
         .select('*')
+        .eq('user_id', user.id)
         .order('date', { ascending: false })
         .limit(10);
 

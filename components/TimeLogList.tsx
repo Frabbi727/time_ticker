@@ -19,6 +19,8 @@ interface TimeLog {
   end_time: string | null;
   direct_duration: string | null;
   projects?: Project;
+  userName?: string;
+  userPin?: string;
 }
 
 interface TimeLogListProps {
@@ -26,9 +28,10 @@ interface TimeLogListProps {
   projectsList?: Project[];
   onEdit?: (log: TimeLog) => void;
   onLogsChange?: () => void;
+  isAdmin?: boolean;
 }
 
-export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChange }: TimeLogListProps) {
+export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChange, isAdmin = false }: TimeLogListProps) {
   // 1. Local states (fallbacks if parent props are missing)
   const [localLogs, setLocalLogs] = useState<TimeLog[]>([]);
   const [localProjects, setLocalProjects] = useState<Project[]>([]);
@@ -51,15 +54,23 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
         setIsLoading(true);
         setError(null);
         try {
-          const [logsRes, projectsRes] = await Promise.all([
+          const [logsRes, projectsRes, profilesRes] = await Promise.all([
             supabase.from('time_logs').select('*, projects(id, name)').order('date', { ascending: false }),
-            supabase.from('projects').select('id, name').order('name', { ascending: true })
+            supabase.from('projects').select('id, name').order('name', { ascending: true }),
+            supabase.from('profiles').select('id, name, pin')
           ]);
 
           if (logsRes.error) throw logsRes.error;
           if (projectsRes.error) throw projectsRes.error;
 
-          if (logsRes.data) setLocalLogs(logsRes.data);
+          const profilesMap = new Map(profilesRes.data?.map(p => [p.id, p]) || []);
+          const joinedLogs = (logsRes.data || []).map(log => ({
+            ...log,
+            userName: profilesMap.get(log.user_id)?.name || 'Unknown User',
+            userPin: profilesMap.get(log.user_id)?.pin || 'N/A'
+          }));
+
+          setLocalLogs(joinedLogs);
           if (projectsRes.data) setLocalProjects(projectsRes.data);
         } catch (err: unknown) {
           console.error("Error fetching data locally:", err);
@@ -83,7 +94,9 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
       const matchesSearch = !searchText || 
         log.description.toLowerCase().includes(searchLower) ||
         (log.remarks && log.remarks.toLowerCase().includes(searchLower)) ||
-        (log.projects?.name && log.projects.name.toLowerCase().includes(searchLower));
+        (log.projects?.name && log.projects.name.toLowerCase().includes(searchLower)) ||
+        (log.userName && log.userName.toLowerCase().includes(searchLower)) ||
+        (log.userPin && log.userPin.toLowerCase().includes(searchLower));
 
       return matchesProject && matchesStart && matchesEnd && matchesSearch;
     });
@@ -117,11 +130,6 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
       const { error: deleteError } = await supabase.from('time_logs').delete().eq('id', id);
       if (deleteError) throw deleteError;
 
-      // Update local state if running in fallback mode
-      if (!logsList) {
-        setLocalLogs(prev => prev.filter(l => l.id !== id));
-      }
-
       // Notify parent
       if (onLogsChange) onLogsChange();
     } catch (err: unknown) {
@@ -136,15 +144,28 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
       return;
     }
     
-    const headers = ['Date', 'Project', 'Description', 'Duration', 'Remarks'];
-    const rows = filteredLogs.map(log => [
-      // Escape commas and quotes for standard CSV formatting
-      `"${log.date}"`,
-      `"${log.projects?.name || 'Unknown Project'}"`,
-      `"${log.description.replace(/"/g, '""')}"`,
-      `"${log.direct_duration || `${log.start_time?.slice(0, 5)} - ${log.end_time?.slice(0, 5)}`}"`,
-      `"${(log.remarks || '').replace(/"/g, '""')}"`
-    ]);
+    const headers = isAdmin
+      ? ['User Name', 'PIN', 'Date', 'Project', 'Description', 'Duration', 'Remarks']
+      : ['Date', 'Project', 'Description', 'Duration', 'Remarks'];
+
+    const rows = filteredLogs.map(log => {
+      const baseFields = [
+        `"${log.date}"`,
+        `"${log.projects?.name || 'Unknown Project'}"`,
+        `"${log.description.replace(/"/g, '""')}"`,
+        `"${log.direct_duration || `${log.start_time?.slice(0, 5)} - ${log.end_time?.slice(0, 5)}`}"`,
+        `"${(log.remarks || '').replace(/"/g, '""')}"`
+      ];
+      
+      if (isAdmin) {
+        return [
+          `"${log.userName || 'Unknown User'}"`,
+          `"${log.userPin || 'N/A'}"`,
+          ...baseFields
+        ];
+      }
+      return baseFields;
+    });
 
     const csvContent = "\uFEFF" + [headers, ...rows].map(e => e.join(',')).join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -184,9 +205,11 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between border-b border-slate-100 pb-6 mb-6">
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <span>📅</span> Time Logs Explorer
+            <span>📅</span> {isAdmin ? 'Team Time Logs Explorer' : 'Time Logs Explorer'}
           </h2>
-          <p className="text-xs text-slate-400 mt-0.5">Filter, search, and export your daily tracked hours</p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {isAdmin ? 'Filter, search, inspect, and export time logs for all team members' : 'Filter, search, and export your daily tracked hours'}
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 bg-slate-50 border border-slate-100 px-4 py-3 rounded-2xl">
@@ -219,11 +242,11 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
       {/* Advanced Filter Toolbar */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 bg-slate-50/50 rounded-2xl border border-slate-100 p-4 mb-6">
         <div>
-          <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider">Search Tasks</label>
+          <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider">Search Tasks / Users</label>
           <div className="relative">
             <input
               type="text"
-              placeholder="Search description/remarks..."
+              placeholder={isAdmin ? "Search task, project, user..." : "Search description/remarks..."}
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
               className="w-full text-xs rounded-xl border border-slate-200 bg-white pl-8 pr-3 py-2 text-slate-800 focus:border-sky-500 focus:ring-1 focus:ring-sky-100 outline-none transition-all placeholder-slate-300"
@@ -310,6 +333,13 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
                   </span>
                 </div>
                 
+                {isAdmin && (
+                  <div className="text-xs font-bold text-slate-800 bg-slate-50 rounded-lg p-2 border border-slate-100 flex items-center justify-between">
+                    <span>👤 {log.userName}</span>
+                    <span className="text-slate-400 font-semibold text-[10px]">PIN: {log.userPin}</span>
+                  </div>
+                )}
+
                 <div>
                   <h4 className="text-sm font-semibold text-slate-800 leading-tight">{log.description}</h4>
                   {log.remarks && <p className="text-xs text-slate-400 mt-1">{log.remarks}</p>}
@@ -347,6 +377,7 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
               <thead>
                 <tr className="border-b border-slate-100 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
                   <th className="py-3.5 px-2">Date</th>
+                  {isAdmin && <th className="py-3.5 px-2">Team Member</th>}
                   <th className="py-3.5 px-2">Project</th>
                   <th className="py-3.5 px-2">Description</th>
                   <th className="py-3.5 px-2 text-center">Duration</th>
@@ -357,6 +388,12 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
                 {filteredLogs.map(log => (
                   <tr key={log.id} className="hover:bg-slate-50/40 transition-colors group">
                     <td className="py-4 px-2 text-xs font-semibold text-slate-600 whitespace-nowrap">{log.date}</td>
+                    {isAdmin && (
+                      <td className="py-4 px-2 whitespace-nowrap">
+                        <div className="font-bold text-slate-800 text-xs truncate max-w-[120px]">{log.userName}</div>
+                        <div className="text-[10px] font-semibold text-slate-400">PIN: {log.userPin}</div>
+                      </td>
+                    )}
                     <td className="py-4 px-2">
                       <span className="inline-block bg-sky-50 border border-sky-100 text-sky-700 px-2 py-1 rounded-lg text-[10px] font-bold max-w-[120px] truncate">
                         {log.projects?.name || 'N/A'}
