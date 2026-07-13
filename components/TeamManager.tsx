@@ -21,7 +21,7 @@ export default function TeamManager({ teamUsers, onProfilesChange }: TeamManager
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [name, setName] = useState('');
   const [pin, setPin] = useState('');
-  const [role, setRole] = useState<'employee' | 'admin'>('employee');
+  const [role, setRole] = useState<string>('employee');
   const [password, setPassword] = useState('');
   const [usePinAsPassword, setUsePinAsPassword] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -171,15 +171,34 @@ export default function TeamManager({ teamUsers, onProfilesChange }: TeamManager
                     </td>
                     {/* Role */}
                     <td className="py-3.5 pr-4">
-                      {member.role === 'admin' ? (
-                        <span className="inline-flex items-center rounded-lg bg-indigo-50 px-2.5 py-1 text-[10px] font-extrabold text-indigo-700 border border-indigo-100">
-                          System Admin
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-lg bg-slate-100 px-2.5 py-1 text-[10px] font-extrabold text-slate-600">
-                          Regular Employee
-                        </span>
-                      )}
+                      {(() => {
+                        const badge = (r: string) => {
+                          switch (r) {
+                            case 'admin':
+                              return { label: 'System Admin', style: 'bg-indigo-50 border border-indigo-100 text-indigo-700 font-extrabold' };
+                            case 'software_engineer':
+                              return { label: 'Software Engineer', style: 'bg-sky-50 border border-sky-100 text-sky-700 font-extrabold' };
+                            case 'ba':
+                              return { label: 'Business Analyst', style: 'bg-amber-50 border border-amber-100 text-amber-700 font-extrabold' };
+                            case 'project_manager':
+                              return { label: 'Project Manager', style: 'bg-rose-50 border border-rose-100 text-rose-700 font-extrabold' };
+                            case 'designer':
+                              return { label: 'UI/UX Designer', style: 'bg-purple-50 border border-purple-100 text-purple-700 font-extrabold' };
+                            case 'qa':
+                              return { label: 'QA Engineer', style: 'bg-emerald-50 border border-emerald-100 text-emerald-700 font-extrabold' };
+                            case 'devops':
+                              return { label: 'DevOps Engineer', style: 'bg-violet-50 border border-violet-100 text-violet-700 font-extrabold' };
+                            default:
+                              return { label: 'Regular Employee', style: 'bg-slate-100 border border-slate-200 text-slate-600 font-extrabold' };
+                          }
+                        };
+                        const b = badge(member.role);
+                        return (
+                          <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-[10px] uppercase tracking-wide ${b.style}`}>
+                            {b.label}
+                          </span>
+                        );
+                      })()}
                     </td>
                     {/* Status badge */}
                     <td className="py-3.5 text-right">
@@ -269,15 +288,21 @@ export default function TeamManager({ teamUsers, onProfilesChange }: TeamManager
               {/* Role Select */}
               <div className="text-left">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                  System Role
+                  System Role / Designation
                 </label>
                 <select
                   value={role}
-                  onChange={(e) => setRole(e.target.value as any)}
+                  onChange={(e) => setRole(e.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-600 outline-none focus:border-sky-500 focus:bg-white transition-all cursor-pointer"
                   disabled={isLoading}
                 >
                   <option value="employee">Regular Employee</option>
+                  <option value="software_engineer">Software Engineer</option>
+                  <option value="ba">Business Analyst</option>
+                  <option value="project_manager">Project Manager</option>
+                  <option value="designer">UI/UX Designer</option>
+                  <option value="qa">QA Engineer</option>
+                  <option value="devops">DevOps Engineer</option>
                   <option value="admin">System Admin</option>
                 </select>
               </div>

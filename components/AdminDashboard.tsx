@@ -44,6 +44,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'working' | 'completed' | 'offline'>('all');
+  const [roleFilter, setRoleFilter] = useState<string>('');
 
   const todayStr = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
   const activeUsersCount = new Set(todayAttendance.filter(a => !a.punch_out).map(a => a.user_id)).size;
@@ -255,6 +256,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
         id: user.id,
         name: user.name,
         pin: user.pin,
+        role: user.role,
         status,
         punchIn: activeRecord ? activeRecord.punch_in : (lastCompletedRecord ? lastCompletedRecord.punch_in : null),
         punchOut: activeRecord ? null : (lastCompletedRecord ? lastCompletedRecord.punch_out : null),
@@ -270,13 +272,14 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
       const matchesSearch = w.name.toLowerCase().includes(searchTerm.toLowerCase()) || w.pin.includes(searchTerm);
       const matchesStatus = statusFilter === 'all' || w.status === statusFilter;
       const matchesGlobalFilter = !selectedUserFilter || w.pin === selectedUserFilter;
+      const matchesRole = !roleFilter || w.role === roleFilter;
       
       // Filter out users who haven't logged any time on the selected project if project filter is active
       const matchesProject = !selectedProjectFilter || logs.some(l => l.userPin === w.pin && l.date === todayStr && l.project_id === selectedProjectFilter);
       
-      return matchesSearch && matchesStatus && matchesGlobalFilter && matchesProject;
+      return matchesSearch && matchesStatus && matchesGlobalFilter && matchesProject && matchesRole;
     });
-  }, [workforceDetails, searchTerm, statusFilter, selectedUserFilter, selectedProjectFilter, logs, todayStr]);
+  }, [workforceDetails, searchTerm, statusFilter, selectedUserFilter, selectedProjectFilter, roleFilter, logs, todayStr]);
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
@@ -292,7 +295,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
         </div>
         
         {/* Global Filters Clear Info */}
-        {(selectedUserFilter || selectedProjectFilter) && (
+        {(selectedUserFilter || selectedProjectFilter || roleFilter) && (
           <div className="mt-3 md:mt-0 flex flex-wrap gap-2 items-center">
             {selectedUserFilter && (
               <span className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-1 rounded-lg">
@@ -306,8 +309,14 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
                 <button onClick={() => setSelectedProjectFilter('')} className="hover:text-sky-900 text-xs font-black cursor-pointer ml-1">×</button>
               </span>
             )}
+            {roleFilter && (
+              <span className="inline-flex items-center gap-1 bg-violet-50 border border-violet-100 text-violet-700 text-[10px] font-bold px-2 py-1 rounded-lg">
+                Role Filter Active
+                <button onClick={() => setRoleFilter('')} className="hover:text-violet-900 text-xs font-black cursor-pointer ml-1">×</button>
+              </span>
+            )}
             <button 
-              onClick={() => { setSelectedUserFilter(''); setSelectedProjectFilter(''); }}
+              onClick={() => { setSelectedUserFilter(''); setSelectedProjectFilter(''); setRoleFilter(''); }}
               className="text-[10px] text-slate-500 hover:text-slate-700 font-extrabold uppercase tracking-wider ml-1 underline cursor-pointer"
             >
               Clear All Filters
@@ -516,6 +525,22 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
               onChange={(e) => setSearchTerm(e.target.value)}
               className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all w-full sm:w-48 shadow-sm"
             />
+            {/* Designation Filter */}
+            <select
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 outline-none focus:border-sky-500 focus:bg-white transition-all cursor-pointer shadow-sm w-full sm:w-auto"
+            >
+              <option value="">All Designations</option>
+              <option value="software_engineer">Software Engineers</option>
+              <option value="ba">Business Analysts</option>
+              <option value="project_manager">Project Managers</option>
+              <option value="designer">Designers</option>
+              <option value="qa">QA Engineers</option>
+              <option value="devops">DevOps Engineers</option>
+              <option value="employee">Regular Employees</option>
+              <option value="admin">System Admins</option>
+            </select>
             {/* Status Filter */}
             <div className="flex bg-slate-150 p-1 rounded-xl w-full sm:w-auto">
               {(['all', 'working', 'completed', 'offline'] as const).map((filter) => (
@@ -563,9 +588,39 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
                       <div className="h-10 w-10 rounded-xl bg-slate-200/60 flex items-center justify-center font-black text-slate-700 text-xs shrink-0">
                         {w.name.slice(0, 2).toUpperCase()}
                       </div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex flex-col gap-0.5">
                         <h4 className="text-xs font-bold text-slate-800 truncate" title={w.name}>{w.name}</h4>
-                        <span className="text-[10px] font-semibold text-slate-400">PIN: {w.pin}</span>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                          <span className="text-[9px] font-bold text-slate-400">PIN: {w.pin}</span>
+                          {(() => {
+                            const badge = (r: string) => {
+                              switch (r) {
+                                case 'admin':
+                                  return { label: 'Admin', style: 'bg-indigo-50 border-indigo-100 text-indigo-700' };
+                                case 'software_engineer':
+                                  return { label: 'Engineer', style: 'bg-sky-50 border-sky-100 text-sky-700' };
+                                case 'ba':
+                                  return { label: 'BA', style: 'bg-amber-50 border-amber-100 text-amber-700' };
+                                case 'project_manager':
+                                  return { label: 'PM', style: 'bg-rose-50 border-rose-100 text-rose-700' };
+                                case 'designer':
+                                  return { label: 'Designer', style: 'bg-purple-50 border-purple-100 text-purple-700' };
+                                case 'qa':
+                                  return { label: 'QA', style: 'bg-emerald-50 border-emerald-100 text-emerald-700' };
+                                case 'devops':
+                                  return { label: 'DevOps', style: 'bg-violet-50 border-violet-100 text-violet-700' };
+                                default:
+                                  return { label: 'Employee', style: 'bg-slate-100 border-slate-200 text-slate-600' };
+                              }
+                            };
+                            const b = badge(w.role || 'employee');
+                            return (
+                              <span className={`inline-flex items-center rounded px-1.5 py-0.2 text-[8px] font-extrabold border uppercase tracking-wider ${b.style}`}>
+                                {b.label}
+                              </span>
+                            );
+                          })()}
+                        </div>
                       </div>
                     </div>
 
