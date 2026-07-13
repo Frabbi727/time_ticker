@@ -16,7 +16,7 @@ interface AttendanceRecord {
 }
 
 export default function PunchCard({ userName, pin }: PunchCardProps) {
-  const [record, setRecord] = useState<AttendanceRecord | null>(null);
+  const [todayRecords, setTodayRecords] = useState<AttendanceRecord[]>([]);
   const [history, setHistory] = useState<AttendanceRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
@@ -27,7 +27,21 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
   const dayName = today.toLocaleDateString("en-US", { weekday: 'long' });
   const displayDate = today.toLocaleDateString("en-US", { month: 'long', day: 'numeric', year: 'numeric' });
 
-  // 1. Fetch today's attendance record
+  // Find the active shift today (where punch_out is null)
+  const activeRecord = todayRecords.find(r => !r.punch_out) || null;
+
+  // Calculate total time worked today
+  const totalMinsToday = todayRecords.reduce((total, r) => {
+    if (r.punch_out) {
+      const diff = new Date(r.punch_out).getTime() - new Date(r.punch_in).getTime();
+      return total + Math.floor(diff / 60000);
+    }
+    return total;
+  }, 0);
+  const totalHoursToday = Math.floor(totalMinsToday / 60);
+  const totalMinsRem = Math.round(totalMinsToday % 60);
+
+  // 1. Fetch today's attendance records (there can be multiple)
   const fetchTodayAttendance = async () => {
     setIsLoading(true);
     setError(null);
@@ -40,10 +54,10 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
         .select('*')
         .eq('user_id', user.id)
         .eq('date', dateStr)
-        .maybeSingle();
+        .order('punch_in', { ascending: false });
 
       if (fetchError) throw fetchError;
-      setRecord(data || null);
+      setTodayRecords(data || []);
     } catch (err: unknown) {
       console.error('Error fetching attendance:', err);
       setError('Failed to load today\'s attendance status.');
@@ -92,7 +106,7 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
         .single();
 
       if (insertError) throw insertError;
-      setRecord(data);
+      setTodayRecords(prev => [data, ...prev]);
       // Refresh history list
       fetchAttendanceHistory();
     } catch (err: unknown) {
@@ -105,7 +119,8 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
 
   // 4. Punch Out Action
   const handlePunchOut = async () => {
-    if (!record) return;
+    const active = todayRecords.find(r => !r.punch_out);
+    if (!active) return;
     setActionLoading(true);
     setError(null);
     try {
@@ -114,12 +129,12 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
         .update({
           punch_out: new Date().toISOString()
         })
-        .eq('id', record.id)
+        .eq('id', active.id)
         .select()
         .single();
 
       if (updateError) throw updateError;
-      setRecord(data);
+      setTodayRecords(prev => prev.map(r => r.id === data.id ? data : r));
       // Refresh history list
       fetchAttendanceHistory();
     } catch (err: unknown) {
@@ -170,16 +185,25 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
       ) : (
         <div className="pt-6">
           {/* Status Indicators */}
-          {!record && (
+          {!activeRecord ? (
             <div className="space-y-6">
-              <div className="flex flex-col items-center justify-center rounded-2xl bg-slate-50/50 py-8 text-center border border-dashed border-slate-200">
+              <div className="flex flex-col items-center justify-center rounded-2xl bg-slate-50/50 py-8 text-center border border-dashed border-slate-200 p-4">
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
                   <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                   </svg>
                 </div>
-                <h3 className="mt-3 text-sm font-bold text-slate-800">You are not punched in</h3>
-                <p className="mt-1 text-xs text-slate-400 max-w-[200px]">Record your attendance by punching in at the start of your shift.</p>
+                <h3 className="mt-3 text-sm font-bold text-slate-800">You are currently clocked out</h3>
+                <p className="mt-1 text-xs text-slate-400 max-w-[220px]">
+                  {todayRecords.length > 0 
+                    ? `You completed ${todayRecords.filter(r => r.punch_out).length} shift(s) today. Click below to start another shift.`
+                    : "Record your attendance by punching in at the start of your shift."}
+                </p>
+                {todayRecords.length > 0 && (
+                  <div className="mt-4 bg-sky-50 border border-sky-100 text-sky-700 px-4 py-2 rounded-xl text-xs font-bold text-center">
+                    Total Time Today: {totalHoursToday}h {totalMinsRem}m
+                  </div>
+                )}
               </div>
 
               <button
@@ -190,9 +214,7 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
                 {actionLoading ? 'Processing...' : 'Punch In'}
               </button>
             </div>
-          )}
-
-          {record && !record.punch_out && (
+          ) : (
             <div className="space-y-6">
               <div className="flex flex-col items-center justify-center rounded-2xl bg-sky-50/20 py-8 text-center border border-sky-100">
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-sky-100 text-sky-600">
@@ -202,7 +224,12 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
                 </div>
                 <h3 className="mt-3 text-xs font-semibold uppercase tracking-wider text-sky-800">Shift Status</h3>
                 <span className="mt-2 text-xl font-extrabold text-slate-800 tracking-tight">Active (In Progress)</span>
-                <p className="mt-2 text-xs text-sky-700 font-medium">Punched In at: {formatTime(record.punch_in)}</p>
+                <p className="mt-2 text-xs text-sky-700 font-medium">Punched In at: {formatTime(activeRecord.punch_in)}</p>
+                {totalMinsToday > 0 && (
+                  <div className="mt-3 text-xs font-bold text-slate-500">
+                    Completed earlier today: {totalHoursToday}h {totalMinsRem}m
+                  </div>
+                )}
               </div>
 
               <button
@@ -212,30 +239,6 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
               >
                 {actionLoading ? 'Processing...' : 'Punch Out'}
               </button>
-            </div>
-          )}
-
-          {record && record.punch_out && (
-            <div className="space-y-6">
-              <div className="flex flex-col items-center justify-center rounded-2xl bg-slate-50 py-8 text-center border border-slate-100">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-200 text-slate-500">
-                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <h3 className="mt-3 text-sm font-bold text-slate-700">Shift Completed</h3>
-                <p className="mt-1.5 text-xs text-slate-400">Total Shift Duration:</p>
-                <span className="text-xl font-extrabold text-slate-800 mt-0.5">{getShiftDuration(record.punch_in, record.punch_out)}</span>
-                <div className="mt-4 flex gap-4 text-xs font-semibold text-slate-500 bg-white border border-slate-100 rounded-xl px-4 py-2">
-                  <div>In: {formatTime(record.punch_in)}</div>
-                  <div className="border-l border-slate-100 h-4"></div>
-                  <div>Out: {formatTime(record.punch_out)}</div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-100 bg-slate-50/50 p-4 text-center text-xs font-bold text-slate-500">
-                Attendance Logged Successfully for Today
-              </div>
             </div>
           )}
 

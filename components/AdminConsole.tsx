@@ -5,6 +5,7 @@ import AdminDashboard from './AdminDashboard';
 import AttendanceExplorer from './AttendanceExplorer';
 import TimeLogList from './TimeLogList';
 import ProjectManager from './ProjectManager';
+import TeamManager from './TeamManager';
 
 interface AdminConsoleProps {
   userName: string;
@@ -18,7 +19,7 @@ interface AdminConsoleProps {
   triggerRefresh: () => void;
 }
 
-type AdminTab = "dashboard" | "attendance" | "explorer" | "projects";
+type AdminTab = "dashboard" | "attendance" | "explorer" | "projects" | "team";
 
 export default function AdminConsole({
   userName,
@@ -136,6 +137,21 @@ export default function AdminConsole({
             </svg>
             Project Manager
           </button>
+
+          {/* Tab 5: Team Management */}
+          <button
+            onClick={() => setActiveTab("team")}
+            className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "team"
+                ? "bg-sky-600 text-white shadow-sm shadow-sky-600/10"
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            Team Manager
+          </button>
         </nav>
 
         {/* Sidebar Footer - Sign Out */}
@@ -163,6 +179,7 @@ export default function AdminConsole({
               {activeTab === "attendance" && "Attendance Logs"}
               {activeTab === "explorer" && "Work Logs"}
               {activeTab === "projects" && "Project Settings"}
+              {activeTab === "team" && "Team Management"}
             </h1>
           </div>
 
@@ -205,6 +222,13 @@ export default function AdminConsole({
               <ProjectManager
                 projectsList={projects}
                 onProjectsChange={triggerRefresh}
+              />
+            )}
+
+            {activeTab === "team" && (
+              <TeamManager
+                teamUsers={teamUsers}
+                onProfilesChange={triggerRefresh}
               />
             )}
           </div>

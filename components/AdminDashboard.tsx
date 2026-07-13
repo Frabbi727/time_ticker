@@ -44,8 +44,8 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
   const [statusFilter, setStatusFilter] = useState<'all' | 'working' | 'completed' | 'offline'>('all');
 
   const todayStr = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
-  const activeUsers = todayAttendance.filter(a => !a.punch_out);
-  const completedUsers = todayAttendance.filter(a => a.punch_out);
+  const activeUsersCount = new Set(todayAttendance.filter(a => !a.punch_out).map(a => a.user_id)).size;
+  const completedShiftsCount = todayAttendance.filter(a => a.punch_out).length;
 
   const formatTime = (isoString: string) => {
     return new Date(isoString).toLocaleTimeString("en-US", {
@@ -208,17 +208,24 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
       const hasCheckedIn = filteredTodayAttendance.length > 0;
       return hasCheckedIn ? 100 : 0;
     }
-    return teamUsers.length > 0 ? Math.round((todayAttendance.length / teamUsers.length) * 100) : 0;
+    const uniqueAttendees = new Set(todayAttendance.map(a => a.user_id)).size;
+    return teamUsers.length > 0 ? Math.round((uniqueAttendees / teamUsers.length) * 100) : 0;
   }, [todayAttendance, teamUsers, selectedUserFilter, filteredTodayAttendance]);
 
   // workforceDetails lists all users with their combined attendance and work time log summaries
   const workforceDetails = useMemo(() => {
     return teamUsers.map(user => {
-      const attendance = todayAttendance.find(a => a.user_id === user.id);
+      const userRecords = todayAttendance.filter(a => a.user_id === user.id);
+      const activeRecord = userRecords.find(a => !a.punch_out) || null;
+      const lastCompletedRecord = userRecords
+        .filter(a => a.punch_out)
+        .sort((a, b) => new Date(b.punch_out!).getTime() - new Date(a.punch_out!).getTime())[0] || null;
       
       let status: 'working' | 'completed' | 'offline' = 'offline';
-      if (attendance) {
-        status = attendance.punch_out ? 'completed' : 'working';
+      if (activeRecord) {
+        status = 'working';
+      } else if (lastCompletedRecord) {
+        status = 'completed';
       }
 
       let minutesToday = 0;
@@ -241,8 +248,8 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
         name: user.name,
         pin: user.pin,
         status,
-        punchIn: attendance ? attendance.punch_in : null,
-        punchOut: attendance ? attendance.punch_out : null,
+        punchIn: activeRecord ? activeRecord.punch_in : (lastCompletedRecord ? lastCompletedRecord.punch_in : null),
+        punchOut: activeRecord ? null : (lastCompletedRecord ? lastCompletedRecord.punch_out : null),
         minutesToday,
         lastTaskDesc,
         lastTaskProject
@@ -312,8 +319,8 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
         <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Active Shifts</span>
-            <span className="text-3xl font-black text-indigo-600 block">{activeUsers.length}</span>
-            <span className="text-[10px] font-semibold text-slate-400">{completedUsers.length} shifts completed today</span>
+            <span className="text-3xl font-black text-indigo-600 block">{activeUsersCount}</span>
+            <span className="text-[10px] font-semibold text-slate-400">{completedShiftsCount} shifts completed today</span>
           </div>
           <div className="h-12 w-12 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600">
             <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">

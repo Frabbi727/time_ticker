@@ -132,7 +132,7 @@ export default function Home() {
         const [logsRes, projectsRes, profilesRes, attendanceRes] = await Promise.all([
           supabase.from("time_logs").select("*, projects(id, name)").order("date", { ascending: false }),
           supabase.from("projects").select("id, name").order("name", { ascending: true }),
-          supabase.from("profiles").select("id, name, pin"),
+          supabase.from("profiles").select("id, name, pin, role, created_at"),
           supabase.from("attendance").select("*").eq("date", todayStr)
         ]);
 
