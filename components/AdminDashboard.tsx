@@ -78,7 +78,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
     return 0;
   };
 
-  // --- Chart 1 Dataset: Last 7 Days Attendance Trend ---
+  // --- Chart 1 Dataset: Last 7 Days Activity (Daily counts or individual hours) ---
   const attendanceTrendData = useMemo(() => {
     const data = [];
     const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -89,22 +89,31 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
       const dateKey = d.toLocaleDateString("en-CA");
       const label = weekdays[d.getDay()];
 
-      const activeUserCount = new Set(
-        logs.filter(l => l.date === dateKey).map(l => l.userPin)
-      ).size;
+      const dayLogs = logs.filter(l => l.date === dateKey && (!selectedUserFilter || l.userPin === selectedUserFilter));
+      
+      let val = 0;
+      if (selectedUserFilter) {
+        let mins = 0;
+        dayLogs.forEach(l => {
+          mins += parseLogMinutes(l);
+        });
+        val = Math.round((mins / 60) * 10) / 10;
+      } else {
+        val = new Set(dayLogs.map(l => l.userPin)).size;
+      }
 
       data.push({
         label,
         date: dateKey,
-        count: activeUserCount
+        val
       });
     }
     return data;
-  }, [logs]);
+  }, [logs, selectedUserFilter]);
 
   // Max value for 7-day trend chart scaling
   const maxTrendVal = useMemo(() => {
-    const maxVal = Math.max(...attendanceTrendData.map(d => d.count));
+    const maxVal = Math.max(...attendanceTrendData.map(d => d.val));
     return maxVal > 0 ? maxVal : 5;
   }, [attendanceTrendData]);
 
@@ -117,7 +126,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
 
     let totalMinutes = 0;
     logs.forEach(log => {
-      if (log.date === todayStr) {
+      if (log.date === todayStr && (!selectedUserFilter || log.userPin === selectedUserFilter)) {
         const mins = parseLogMinutes(log);
         totalMinutes += mins;
         if (projMap[log.project_id]) {
@@ -147,7 +156,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
       dataset,
       totalMinutes
     };
-  }, [logs, projects, todayStr]);
+  }, [logs, projects, todayStr, selectedUserFilter]);
 
   // Calculate SVG Doughnut segments
   const doughnutSegments = useMemo(() => {
@@ -193,7 +202,14 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
     });
   }, [todayAttendance, teamUsers, selectedUserFilter]);
 
-  const attendanceRate = teamUsers.length > 0 ? Math.round((todayAttendance.length / teamUsers.length) * 100) : 0;
+  // Attendance rate is calculated for the selected user (100% if checked in, 0% otherwise) or globally
+  const attendanceRate = useMemo(() => {
+    if (selectedUserFilter) {
+      const hasCheckedIn = filteredTodayAttendance.length > 0;
+      return hasCheckedIn ? 100 : 0;
+    }
+    return teamUsers.length > 0 ? Math.round((todayAttendance.length / teamUsers.length) * 100) : 0;
+  }, [todayAttendance, teamUsers, selectedUserFilter, filteredTodayAttendance]);
 
   // workforceDetails lists all users with their combined attendance and work time log summaries
   const workforceDetails = useMemo(() => {
@@ -238,9 +254,10 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
     return workforceDetails.filter(w => {
       const matchesSearch = w.name.toLowerCase().includes(searchTerm.toLowerCase()) || w.pin.includes(searchTerm);
       const matchesStatus = statusFilter === 'all' || w.status === statusFilter;
-      return matchesSearch && matchesStatus;
+      const matchesGlobalFilter = !selectedUserFilter || w.pin === selectedUserFilter;
+      return matchesSearch && matchesStatus && matchesGlobalFilter;
     });
-  }, [workforceDetails, searchTerm, statusFilter]);
+  }, [workforceDetails, searchTerm, statusFilter, selectedUserFilter]);
 
   return (
     <div className="space-y-8">
@@ -345,12 +362,12 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
           
           <div className="mt-8 flex h-48 items-end justify-between gap-4 px-2">
             {attendanceTrendData.map((data, idx) => {
-              const heightPct = (data.count / maxTrendVal) * 100;
+              const heightPct = (data.val / maxTrendVal) * 100;
               return (
                 <div key={idx} className="flex flex-col items-center flex-1 group gap-2">
                   <div className="relative w-full flex justify-center">
-                    <div className="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow">
-                      {data.count} active
+                    <div className="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap">
+                      {selectedUserFilter ? `${data.val} hours` : `${data.val} active`}
                     </div>
                     <div 
                       style={{ height: `${heightPct > 5 ? heightPct : 5}%` }}
