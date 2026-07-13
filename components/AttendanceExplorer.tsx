@@ -15,20 +15,33 @@ export default function AttendanceExplorer() {
   const [logs, setLogs] = useState<AttendanceRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [selectedLog, setSelectedLog] = useState<AttendanceRecord | null>(null);
-  const [filterMonth, setFilterMonth] = useState<string>(''); // YYYY-MM
+  
+  // Filtering state
+  const [filterMonth, setFilterMonth] = useState<string>(() => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = (d.getMonth() + 1).toString().padStart(2, '0');
+    return `${year}-${month}`;
+  });
+  
   const [error, setError] = useState<string | null>(null);
+
+  // Editing state
+  const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [editDate, setEditDate] = useState<string>('');
+  const [editPunchIn, setEditPunchIn] = useState<string>('');
+  const [editPunchOut, setEditPunchOut] = useState<string>('');
+  const [editLoading, setEditLoading] = useState<boolean>(false);
 
   // 1. Fetch all attendance logs
   const fetchLogs = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      let query = supabase
+      const { data, error: fetchError } = await supabase
         .from('attendance')
         .select('*')
         .order('date', { ascending: false });
-
-      const { data, error: fetchError } = await query;
 
       if (fetchError) throw fetchError;
       setLogs(data || []);
@@ -44,7 +57,18 @@ export default function AttendanceExplorer() {
     fetchLogs();
   }, []);
 
-  // 2. Formatting Helpers
+  // 2. Initializing edit states when selected log changes
+  useEffect(() => {
+    if (selectedLog) {
+      setEditDate(selectedLog.date);
+      setEditPunchIn(getTimeStringFromIso(selectedLog.punch_in));
+      setEditPunchOut(getTimeStringFromIso(selectedLog.punch_out));
+    } else {
+      setIsEditing(false);
+    }
+  }, [selectedLog]);
+
+  // 3. Formatting & Parsing Helpers
   const formatTime = (isoString: string) => {
     return new Date(isoString).toLocaleTimeString("en-US", {
       hour: '2-digit',
@@ -76,20 +100,78 @@ export default function AttendanceExplorer() {
     return `${hrs}h ${mins}m`;
   };
 
-  // 3. Filtered Logs calculation
+  const getTimeStringFromIso = (isoStr: string | null): string => {
+    if (!isoStr) return '';
+    const d = new Date(isoStr);
+    const hours = d.getHours().toString().padStart(2, '0');
+    const minutes = d.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+
+  const combineDateAndTime = (dateStr: string, timeStr: string): string => {
+    const [hours, minutes] = timeStr.split(':');
+    const d = new Date(dateStr + 'T00:00:00');
+    d.setHours(parseInt(hours, 10));
+    d.setMinutes(parseInt(minutes, 10));
+    return d.toISOString();
+  };
+
+  // 4. Save Edited Record
+  const handleSaveEdit = async () => {
+    if (!selectedLog) return;
+    setEditLoading(true);
+    setError(null);
+    try {
+      if (!editDate || !editPunchIn) {
+        throw new Error('Date and Punch In time are required.');
+      }
+
+      const punchInIso = combineDateAndTime(editDate, editPunchIn);
+      const punchOutIso = editPunchOut ? combineDateAndTime(editDate, editPunchOut) : null;
+
+      // Simple validation: check if punch out is after punch in
+      if (punchOutIso && new Date(punchOutIso) <= new Date(punchInIso)) {
+        throw new Error('Punch Out time must be after Punch In time.');
+      }
+
+      const { data, error: updateError } = await supabase
+        .from('attendance')
+        .update({
+          date: editDate,
+          punch_in: punchInIso,
+          punch_out: punchOutIso
+        })
+        .eq('id', selectedLog.id)
+        .select()
+        .single();
+
+      if (updateError) throw updateError;
+      
+      // Update local states
+      setSelectedLog(data);
+      setIsEditing(false);
+      
+      // Refresh list
+      await fetchLogs();
+    } catch (err: unknown) {
+      console.error('Error updating attendance record:', err);
+      setError(err instanceof Error ? err.message : 'Failed to save attendance updates.');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  // 5. Filtered Logs calculation
   const filteredLogs = logs.filter(log => {
     if (!filterMonth) return true;
     return log.date.startsWith(filterMonth);
   });
 
-  // 4. CSV Download Trigger
+  // 6. CSV Download Trigger
   const downloadCSV = () => {
     if (filteredLogs.length === 0) return;
 
-    // Define CSV headers
     const headers = ['Date', 'Day', 'Punch In', 'Punch Out', 'Duration', 'Status'];
-    
-    // Format rows
     const rows = filteredLogs.map(log => {
       const durationStr = log.punch_out ? getShiftDuration(log.punch_in, log.punch_out) : 'N/A';
       const status = log.punch_out ? 'Completed' : 'Active';
@@ -103,13 +185,11 @@ export default function AttendanceExplorer() {
       ];
     });
 
-    // Construct CSV content string
     const csvContent = [
       headers.join(','),
       ...rows.map(row => row.map(value => `"${value.replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
-    // Create browser download link
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -157,7 +237,7 @@ export default function AttendanceExplorer() {
       </div>
 
       {error && (
-        <div className="rounded-2xl bg-rose-50 border-l-4 border-rose-500 p-4 text-sm text-rose-700 font-semibold">
+        <div className="rounded-2xl bg-rose-50 border-l-4 border-rose-500 p-4 text-xs text-rose-700 font-bold">
           {error}
         </div>
       )}
@@ -197,7 +277,10 @@ export default function AttendanceExplorer() {
                     return (
                       <tr
                         key={log.id}
-                        onClick={() => setSelectedLog(log)}
+                        onClick={() => {
+                          setSelectedLog(log);
+                          setIsEditing(false);
+                        }}
                         className={`hover:bg-slate-50/80 transition-all cursor-pointer ${
                           isSelected ? 'bg-sky-50/30' : ''
                         }`}
@@ -229,61 +312,132 @@ export default function AttendanceExplorer() {
           )}
         </div>
 
-        {/* Details Panel View (1 Col) */}
+        {/* Details & Edit Panel View (1 Col) */}
         <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-900 mb-4">Shift Details</h3>
+          <h3 className="text-sm font-bold text-slate-900 mb-4">
+            {isEditing ? 'Edit Shift Record' : 'Shift Details'}
+          </h3>
           
           {selectedLog ? (
-            <div className="space-y-6">
-              {/* Detail Card Summary */}
-              <div className="rounded-2xl bg-slate-50 p-5 border border-slate-100 text-center">
-                <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Shift Date</p>
-                <h4 className="mt-1 text-base font-extrabold text-slate-800">{formatDate(selectedLog.date)}</h4>
-                
-                {selectedLog.punch_out ? (
-                  <>
-                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mt-4">Total Worked Time</p>
-                    <span className="mt-1 block text-3xl font-black text-slate-800 tracking-tight">
-                      {getShiftDuration(selectedLog.punch_in, selectedLog.punch_out)}
-                    </span>
-                  </>
-                ) : (
-                  <div className="mt-4 inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 animate-pulse">
-                    Shift In Progress
+            <div>
+              {isEditing ? (
+                /* --- EDITING MODE PANEL --- */
+                <div className="space-y-5">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Shift Date</label>
+                    <input
+                      type="date"
+                      value={editDate}
+                      onChange={(e) => setEditDate(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                    />
                   </div>
-                )}
-              </div>
 
-              {/* Specific timestamps */}
-              <div className="space-y-4 text-xs font-semibold text-slate-600">
-                <div className="flex justify-between items-center py-2 border-b border-slate-50">
-                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Punch In Time</span>
-                  <span className="text-slate-800 font-bold">{formatTime(selectedLog.punch_in)}</span>
-                </div>
-                <div className="flex justify-between items-center py-2 border-b border-slate-50">
-                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Punch Out Time</span>
-                  <span className="text-slate-800 font-bold">
-                    {selectedLog.punch_out ? formatTime(selectedLog.punch_out) : '--:--:--'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center py-2 border-b border-slate-50">
-                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Record ID</span>
-                  <span className="text-slate-500 font-mono truncate max-w-[150px]">{selectedLog.id}</span>
-                </div>
-                <div className="flex justify-between items-center py-2">
-                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Logged At</span>
-                  <span className="text-slate-500 font-bold">
-                    {new Date(selectedLog.created_at).toLocaleString()}
-                  </span>
-                </div>
-              </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch In Time</label>
+                    <input
+                      type="time"
+                      value={editPunchIn}
+                      onChange={(e) => setEditPunchIn(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                    />
+                  </div>
 
-              <div className="rounded-2xl bg-sky-50/30 border border-sky-100 p-4">
-                <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-sky-800">Shift Notes</h4>
-                <p className="mt-1 text-xs text-sky-700 leading-relaxed font-semibold">
-                  This shift was logged securely via your pre-registered PIN profile.
-                </p>
-              </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch Out Time (Optional)</label>
+                    <input
+                      type="time"
+                      value={editPunchOut}
+                      onChange={(e) => setEditPunchOut(e.target.value)}
+                      placeholder="Shift not ended yet"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                    />
+                    <p className="text-[10px] text-slate-400 font-medium">Leave blank if the shift is currently active.</p>
+                  </div>
+
+                  <div className="pt-2 flex gap-3">
+                    <button
+                      onClick={() => setIsEditing(false)}
+                      disabled={editLoading}
+                      className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveEdit}
+                      disabled={editLoading}
+                      className="flex-1 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all shadow-md shadow-sky-100 cursor-pointer disabled:opacity-50"
+                    >
+                      {editLoading ? 'Saving...' : 'Save Changes'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* --- DETAILS VIEW PANEL --- */
+                <div className="space-y-6">
+                  {/* Detail Card Summary */}
+                  <div className="rounded-2xl bg-slate-50 p-5 border border-slate-100 text-center">
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Shift Date</p>
+                    <h4 className="mt-1 text-base font-extrabold text-slate-800">{formatDate(selectedLog.date)}</h4>
+                    
+                    {selectedLog.punch_out ? (
+                      <>
+                        <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mt-4">Total Worked Time</p>
+                        <span className="mt-1 block text-3xl font-black text-slate-800 tracking-tight">
+                          {getShiftDuration(selectedLog.punch_in, selectedLog.punch_out)}
+                        </span>
+                      </>
+                    ) : (
+                      <div className="mt-4 inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 animate-pulse">
+                        Shift In Progress
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Specific timestamps */}
+                  <div className="space-y-4 text-xs font-semibold text-slate-600">
+                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
+                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Punch In Time</span>
+                      <span className="text-slate-800 font-bold">{formatTime(selectedLog.punch_in)}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
+                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Punch Out Time</span>
+                      <span className="text-slate-800 font-bold">
+                        {selectedLog.punch_out ? formatTime(selectedLog.punch_out) : '--:--:--'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
+                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Record ID</span>
+                      <span className="text-slate-500 font-mono truncate max-w-[120px]" title={selectedLog.id}>{selectedLog.id}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2">
+                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Logged At</span>
+                      <span className="text-slate-500 font-bold">
+                        {new Date(selectedLog.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setIsEditing(true)}
+                      className="w-full py-2.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
+                    >
+                      <svg className="h-3.5 w-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                      Edit Shift Log
+                    </button>
+                  </div>
+
+                  <div className="rounded-2xl bg-sky-50/30 border border-sky-100 p-4">
+                    <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-sky-800">Shift Notes</h4>
+                    <p className="mt-1 text-xs text-sky-700 leading-relaxed font-semibold">
+                      This shift was logged securely via your pre-registered PIN profile.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex h-64 flex-col items-center justify-center text-center rounded-2xl border border-dashed border-slate-200 p-4">
