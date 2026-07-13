@@ -7,6 +7,8 @@ import TimeLogForm from "@/components/TimeLogForm";
 import TimeLogList from "@/components/TimeLogList";
 import ProjectManager from "@/components/ProjectManager";
 import AuthScreen from "@/components/AuthScreen";
+import PunchCard from "@/components/PunchCard";
+import AttendanceExplorer from "@/components/AttendanceExplorer";
 
 // --- Types ---
 interface Project {
@@ -30,13 +32,14 @@ export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
 
-  const [activeTab, setActiveTab] = useState<"tracker" | "explorer" | "projects">("tracker");
+  const [activeTab, setActiveTab] = useState<"tracker" | "explorer" | "projects" | "attendance">("tracker");
   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [userName, setUserName] = useState<string>("");
+  const [userPin, setUserPin] = useState<string>("");
 
   const triggerRefresh = () => setRefreshTrigger((prev) => prev + 1);
 
@@ -44,6 +47,7 @@ export default function Home() {
   useEffect(() => {
     if (!session) {
       setUserName("");
+      setUserPin("");
       return;
     }
 
@@ -51,17 +55,20 @@ export default function Home() {
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("name")
+          .select("name, pin")
           .single();
 
         if (error) {
           console.warn("Could not fetch profile, using user metadata:", error);
           // Fallback to metadata or email prefix
           const metaName = session?.user?.user_metadata?.name;
+          const metaPin = session?.user?.user_metadata?.pin || session?.user?.email?.split("@")[0] || "";
           const emailPrefix = session?.user?.email?.split("@")[0] || "User";
           setUserName(metaName || emailPrefix);
+          setUserPin(metaPin);
         } else if (data) {
           setUserName(data.name);
+          setUserPin(data.pin);
         }
       } catch (err) {
         console.error("Error fetching user profile:", err);
@@ -304,6 +311,19 @@ export default function Home() {
                 </svg>
                 Projects
               </button>
+              <button
+                onClick={() => setActiveTab("attendance")}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === "attendance"
+                    ? "bg-white text-sky-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
+                }`}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Attendance Explorer
+              </button>
             </nav>
 
             {/* Profile Dropdown / Sign Out */}
@@ -406,6 +426,9 @@ export default function Home() {
                   />
                 </div>
                 <div className="space-y-6">
+                  {/* Attendance Punch Card */}
+                  <PunchCard userName={userName} pin={userPin} />
+
                   {/* Visual Project Breakdown Card */}
                   <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
                     <h3 className="text-base font-bold text-slate-900">Project Breakdown</h3>
@@ -466,6 +489,11 @@ export default function Home() {
                 projectsList={projects}
                 onProjectsChange={triggerRefresh}
               />
+            )}
+
+            {/* Tab 4: Attendance Explorer */}
+            {activeTab === "attendance" && (
+              <AttendanceExplorer />
             )}
           </div>
         )}
