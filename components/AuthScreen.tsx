@@ -108,14 +108,6 @@ export default function AuthScreen() {
           </p>
         </div>
 
-        {/* Note about Seeded Credentials */}
-        <div className="rounded-2xl border border-sky-100 bg-sky-50/40 p-4">
-          <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-sky-800">Seeded Credentials</h4>
-          <p className="mt-1 text-xs text-sky-700 leading-relaxed">
-            Use PIN <strong className="font-bold">1909</strong> and Password <strong className="font-bold">1909</strong> to sign in as <strong className="font-bold">MD FAZLE RABBI</strong>.
-          </p>
-        </div>
-
         {/* Auth Form */}
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
