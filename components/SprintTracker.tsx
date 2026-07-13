@@ -812,8 +812,17 @@ export default function SprintTracker({
 
                 {/* Timeline Range & Action Buttons */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-50 mt-1">
-                  <div className="text-[11px] font-semibold text-slate-400">
-                    ⏱️ Timeline: <span className="font-bold text-slate-600">{sprint.start_date}</span> to <span className="font-bold text-slate-600">{sprint.end_date}</span>
+                  <div className="flex items-center gap-3 bg-slate-50 border border-slate-200/50 px-3.5 py-1.5 rounded-2xl select-none">
+                    <span className="text-sm">📅</span>
+                    <div className="flex flex-col">
+                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider leading-none">Start</span>
+                      <span className="text-[11px] font-black text-slate-700 mt-0.5">{sprint.start_date}</span>
+                    </div>
+                    <span className="text-slate-300 font-black text-xs">➔</span>
+                    <div className="flex flex-col">
+                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider leading-none">End</span>
+                      <span className="text-[11px] font-black text-slate-700 mt-0.5">{sprint.end_date}</span>
+                    </div>
                   </div>
 
                   {isEditor && (
