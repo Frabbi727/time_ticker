@@ -96,4 +96,4 @@ SET
   recovery_token = COALESCE(recovery_token, ''),
   phone_change = COALESCE(phone_change, ''),
   phone_change_token = COALESCE(phone_change_token, '')
-WHERE email = '1909@tracker.local';
+WHERE email = '0000@tracker.local';

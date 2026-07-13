@@ -124,7 +124,7 @@ export default function AuthScreen() {
               required
               value={pin}
               onChange={(e) => setPin(e.target.value)}
-              placeholder="e.g. 1909"
+              placeholder="e.g. 0000"
               className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm text-slate-800 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition-all placeholder-slate-300"
               disabled={isLoading}
             />

@@ -56,5 +56,5 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
 
 -- Insert an initial test user into allowed_users
 INSERT INTO public.allowed_users (name, pin) 
-VALUES ('MD FAZLE RABBI', '1909')
+VALUES ('Employee', '0000')
 ON CONFLICT (pin) DO NOTHING;

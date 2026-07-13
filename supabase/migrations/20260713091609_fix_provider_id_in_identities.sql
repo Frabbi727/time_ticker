@@ -85,7 +85,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Update the existing identity row for 1909 to set provider_id to '1909@tracker.local'
+-- Update the existing identity row for 0000 to set provider_id to '0000@tracker.local'
 UPDATE auth.identities
-SET provider_id = '1909@tracker.local'
-WHERE email = '1909@tracker.local';
+SET provider_id = '0000@tracker.local'
+WHERE email = '0000@tracker.local';

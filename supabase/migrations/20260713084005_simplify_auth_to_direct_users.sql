@@ -85,8 +85,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Seed MD FAZLE RABBI (PIN: 1909)
-SELECT public.create_tracker_user('1909', 'MD FAZLE RABBI');
+-- Seed Employee (PIN: 0000)
+SELECT public.create_tracker_user('0000', 'Name');
 
 -- Clean up any existing rows to prevent GoTrue 500 error due to NULL columns
 UPDATE auth.users
@@ -99,7 +99,7 @@ SET
   recovery_token = COALESCE(recovery_token, ''),
   phone_change = COALESCE(phone_change, ''),
   phone_change_token = COALESCE(phone_change_token, '')
-WHERE email = '1909@tracker.local';
+WHERE email = '0000@tracker.local';
 
 -- Clean up allowed_users table and verify_allowed_pin RPC function
 DROP FUNCTION IF EXISTS public.verify_allowed_pin(TEXT);
