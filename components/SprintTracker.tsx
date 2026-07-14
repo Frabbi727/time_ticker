@@ -156,7 +156,7 @@ export default function SprintTracker({
 
       if (fetchError) throw fetchError;
       setSprints(data || []);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error fetching sprints:', err);
       setError('Failed to fetch sprints from the database.');
     } finally {
@@ -442,9 +442,9 @@ export default function SprintTracker({
         setSuccess(null);
       }, 1000);
 
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error saving sprint:', err);
-      setError(err.message || 'An error occurred while saving the sprint.');
+      setError(err instanceof Error ? err.message : 'An error occurred while saving the sprint.');
     }
   };
 
@@ -475,7 +475,7 @@ export default function SprintTracker({
       
       await fetchSprints();
       if (onRefresh) onRefresh();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error finishing sprint:', err);
       setError('Failed to complete the sprint.');
     }
@@ -503,9 +503,9 @@ export default function SprintTracker({
       setDeleteTargetName('');
       await fetchSprints();
       if (onRefresh) onRefresh();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error deleting sprint:', err);
-      setError(err.message || 'Failed to delete the sprint.');
+      setError(err instanceof Error ? err.message : 'Failed to delete the sprint.');
     } finally {
       setIsDeleting(false);
     }

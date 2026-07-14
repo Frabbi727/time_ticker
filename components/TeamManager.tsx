@@ -94,9 +94,9 @@ export default function TeamManager({ teamUsers, onProfilesChange, role: viewerR
         setSuccess(null);
       }, 1500);
       
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error registering employee:', err);
-      setError(err.message || 'Failed to register the new employee.');
+      setError(err instanceof Error ? err.message : 'Failed to register the new employee.');
     } finally {
       setIsLoading(false);
     }
