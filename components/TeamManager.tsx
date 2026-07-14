@@ -135,6 +135,10 @@ export default function TeamManager({ teamUsers, onProfilesChange, role: viewerR
       return;
     }
 
+    if (!window.confirm(`Are you sure you want to save the changes for ${editingMember.name}?`)) {
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     setSuccess(null);
