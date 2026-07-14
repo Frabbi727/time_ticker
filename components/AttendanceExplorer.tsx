@@ -43,6 +43,24 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
   const [editPunchOut, setEditPunchOut] = useState<string>('');
   const [editLoading, setEditLoading] = useState<boolean>(false);
 
+  // Adding state
+  const [isAdding, setIsAdding] = useState<boolean>(false);
+  const [addDate, setAddDate] = useState<string>(() => {
+    const d = new Date();
+    return d.toLocaleDateString("en-CA"); // YYYY-MM-DD in local time
+  });
+  const [addPunchIn, setAddPunchIn] = useState<string>('09:00');
+  const [addPunchOut, setAddPunchOut] = useState<string>('17:00');
+  const [addUserId, setAddUserId] = useState<string>('');
+  const [addLoading, setAddLoading] = useState<boolean>(false);
+  const [profiles, setProfiles] = useState<{ id: string; name: string; pin: string }[]>([]);
+
+  const startAdding = () => {
+    setSelectedLog(null);
+    setIsAdding(true);
+    setError(null);
+  };
+
   // 1. Fetch all attendance logs and join with profile information in Javascript
   const fetchLogs = async () => {
     setIsLoading(true);
@@ -62,6 +80,8 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
         .select('id, name, pin');
 
       if (profilesError) throw profilesError;
+
+      setProfiles(profilesData || []);
 
       const profilesMap = new Map(profilesData?.map(p => [p.id, p]) || []);
 
@@ -90,6 +110,7 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
       setEditDate(selectedLog.date);
       setEditPunchIn(getTimeStringFromIso(selectedLog.punch_in));
       setEditPunchOut(getTimeStringFromIso(selectedLog.punch_out));
+      setIsAdding(false);
     } else {
       setIsEditing(false);
     }
@@ -153,6 +174,11 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
         throw new Error('Date and Punch In time are required.');
       }
 
+      const todayStr = new Date().toLocaleDateString("en-CA");
+      if (editDate > todayStr) {
+        throw new Error('Cannot log attendance for a future date.');
+      }
+
       const punchInIso = combineDateAndTime(editDate, editPunchIn);
       const punchOutIso = editPunchOut ? combineDateAndTime(editDate, editPunchOut) : null;
 
@@ -188,6 +214,73 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
       setError(err instanceof Error ? err.message : 'Failed to save attendance updates.');
     } finally {
       setEditLoading(false);
+    }
+  };
+
+  // 5. Save New Record (Backdated Attendance)
+  const handleSaveAdd = async () => {
+    setAddLoading(true);
+    setError(null);
+    try {
+      if (!addDate || !addPunchIn) {
+        throw new Error('Date and Punch In time are required.');
+      }
+
+      const todayStr = new Date().toLocaleDateString("en-CA");
+      if (addDate > todayStr) {
+        throw new Error('Cannot log attendance for a future date.');
+      }
+
+      if (isAdmin && !addUserId) {
+        throw new Error('Please select an employee.');
+      }
+
+      const punchInIso = combineDateAndTime(addDate, addPunchIn);
+      const punchOutIso = addPunchOut ? combineDateAndTime(addDate, addPunchOut) : null;
+
+      if (punchOutIso && new Date(punchOutIso) <= new Date(punchInIso)) {
+        throw new Error('Punch Out time must be after Punch In time.');
+      }
+
+      let targetUserId = addUserId;
+      if (!isAdmin) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error('User session not found.');
+        targetUserId = user.id;
+      }
+
+      const recordToInsert: any = {
+        date: addDate,
+        punch_in: punchInIso,
+        punch_out: punchOutIso,
+      };
+
+      if (targetUserId) {
+        recordToInsert.user_id = targetUserId;
+      }
+
+      const { data, error: insertError } = await supabase
+        .from('attendance')
+        .insert(recordToInsert)
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+
+      setIsAdding(false);
+      
+      // Reset inputs
+      setAddDate(new Date().toLocaleDateString("en-CA"));
+      setAddPunchIn('09:00');
+      setAddPunchOut('17:00');
+      setAddUserId('');
+      
+      await fetchLogs();
+    } catch (err: unknown) {
+      console.error('Error adding attendance record:', err);
+      setError(err instanceof Error ? err.message : 'Failed to add attendance record.');
+    } finally {
+      setAddLoading(false);
     }
   };
 
@@ -281,12 +374,21 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
           <button
             onClick={downloadCSV}
             disabled={filteredLogs.length === 0}
-            className="flex items-center gap-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-sky-100 cursor-pointer active:scale-95 transition-all"
+            className="flex items-center gap-1.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 hover:text-sky-700 border border-slate-200 hover:border-sky-100 font-bold text-xs px-4 py-2.5 shadow-sm cursor-pointer active:scale-95 transition-all"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             Download CSV
+          </button>
+          <button
+            onClick={startAdding}
+            className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-emerald-100 cursor-pointer active:scale-95 transition-all"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Add Record
           </button>
         </div>
       </div>
@@ -379,10 +481,80 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
         {/* Details & Edit Panel View (1 Col) */}
         <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
           <h3 className="text-sm font-bold text-slate-900 mb-4">
-            {isEditing ? 'Edit Shift Record' : 'Shift Details'}
+            {isAdding ? 'Add Attendance Record' : isEditing ? 'Edit Shift Record' : 'Shift Details'}
           </h3>
           
-          {selectedLog ? (
+          {isAdding ? (
+            /* --- ADDING MODE PANEL --- */
+            <div className="space-y-5">
+              {isAdmin && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Select Employee</label>
+                  <select
+                    value={addUserId}
+                    onChange={(e) => setAddUserId(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                  >
+                    <option value="">Choose an employee...</option>
+                    {profiles.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} (PIN: {p.pin})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Shift Date</label>
+                <input
+                  type="date"
+                  value={addDate}
+                  max={new Date().toLocaleDateString("en-CA")}
+                  onChange={(e) => setAddDate(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch In Time</label>
+                <input
+                  type="time"
+                  value={addPunchIn}
+                  onChange={(e) => setAddPunchIn(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch Out Time (Optional)</label>
+                <input
+                  type="time"
+                  value={addPunchOut}
+                  onChange={(e) => setAddPunchOut(e.target.value)}
+                  placeholder="Shift in progress"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                />
+              </div>
+
+              <div className="pt-2 flex gap-3">
+                <button
+                  onClick={() => setIsAdding(false)}
+                  disabled={addLoading}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveAdd}
+                  disabled={addLoading}
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-md shadow-emerald-100 cursor-pointer disabled:opacity-50"
+                >
+                  {addLoading ? 'Saving...' : 'Add Record'}
+                </button>
+              </div>
+            </div>
+          ) : selectedLog ? (
             <div>
               {isEditing ? (
                 /* --- EDITING MODE PANEL --- */
@@ -399,6 +571,7 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
                     <input
                       type="date"
                       value={editDate}
+                      max={new Date().toLocaleDateString("en-CA")}
                       onChange={(e) => setEditDate(e.target.value)}
                       className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
                     />
@@ -514,14 +687,23 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
               )}
             </div>
           ) : (
-            <div className="flex h-64 flex-col items-center justify-center text-center rounded-2xl border border-dashed border-slate-200 p-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <div className="flex flex-col items-center justify-center text-center rounded-2xl border border-dashed border-slate-200 p-6 min-h-[300px]">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-50 text-slate-400 border border-slate-100">
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <h4 className="mt-3 text-xs font-bold text-slate-700">No Shift Selected</h4>
-              <p className="mt-1 text-[11px] text-slate-400">Click on any shift row in the table to view detailed logs and parameters.</p>
+              <h4 className="mt-4 text-xs font-bold text-slate-700">No Shift Selected</h4>
+              <p className="mt-1.5 text-[11px] text-slate-400 max-w-[200px] leading-relaxed">Click on any shift row in the table to view details, or log a new backdated record below.</p>
+              <button
+                onClick={startAdding}
+                className="mt-5 w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-md shadow-emerald-100 cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Log Attendance Manually
+              </button>
             </div>
           )}
         </div>
