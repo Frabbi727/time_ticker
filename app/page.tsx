@@ -297,6 +297,7 @@ export default function Home() {
       case 'designer': return 'UI/UX Designer';
       case 'qa': return 'QA Engineer';
       case 'devops': return 'DevOps';
+      case 'manager': return 'Manager';
       default: return 'Regular Employee';
     }
   };

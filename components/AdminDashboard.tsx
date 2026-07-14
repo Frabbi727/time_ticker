@@ -538,6 +538,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
               <option value="designer">Designers</option>
               <option value="qa">QA Engineers</option>
               <option value="devops">DevOps Engineers</option>
+              <option value="manager">Managers</option>
               <option value="employee">Regular Employees</option>
               <option value="admin">System Admins</option>
             </select>
@@ -609,6 +610,8 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
                                   return { label: 'QA', style: 'bg-emerald-50 border-emerald-100 text-emerald-700' };
                                 case 'devops':
                                   return { label: 'DevOps', style: 'bg-violet-50 border-violet-100 text-violet-700' };
+                                case 'manager':
+                                  return { label: 'Manager', style: 'bg-cyan-50 border-cyan-100 text-cyan-700' };
                                 default:
                                   return { label: 'Employee', style: 'bg-slate-100 border-slate-200 text-slate-600' };
                               }

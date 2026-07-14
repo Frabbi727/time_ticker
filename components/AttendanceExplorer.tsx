@@ -27,11 +27,21 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
   const [selectedLog, setSelectedLog] = useState<JoinedAttendanceRecord | null>(null);
   
   // Filtering state
+  const [filterDate, setFilterDate] = useState<string>(() => {
+    if (isAdmin) {
+      return new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
+    }
+    return '';
+  });
+
   const [filterMonth, setFilterMonth] = useState<string>(() => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = (d.getMonth() + 1).toString().padStart(2, '0');
-    return `${year}-${month}`;
+    if (!isAdmin) {
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = (d.getMonth() + 1).toString().padStart(2, '0');
+      return `${year}-${month}`;
+    }
+    return '';
   });
   
   const [error, setError] = useState<string | null>(null);
@@ -286,8 +296,9 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
 
   // 5. Filtered Logs calculation
   const filteredLogs = logs.filter(log => {
-    if (!filterMonth) return true;
-    return log.date.startsWith(filterMonth);
+    if (filterDate && log.date !== filterDate) return false;
+    if (filterMonth && !log.date.startsWith(filterMonth)) return false;
+    return true;
   });
 
   // 6. CSV Download Trigger
@@ -336,7 +347,8 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `attendance_report_${filterMonth || 'all'}.csv`);
+    const filterName = filterDate || filterMonth || 'all';
+    link.setAttribute("download", `attendance_report_${filterName}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -357,15 +369,33 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <input
-            type="month"
-            value={filterMonth}
-            onChange={(e) => setFilterMonth(e.target.value)}
-            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
-          />
-          {filterMonth && (
+          {isAdmin ? (
+            <input
+              type="date"
+              value={filterDate}
+              onChange={(e) => {
+                setFilterDate(e.target.value);
+                setFilterMonth('');
+              }}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+            />
+          ) : (
+            <input
+              type="month"
+              value={filterMonth}
+              onChange={(e) => {
+                setFilterMonth(e.target.value);
+                setFilterDate('');
+              }}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+            />
+          )}
+          {(filterDate || filterMonth) && (
             <button
-              onClick={() => setFilterMonth('')}
+              onClick={() => {
+                setFilterDate('');
+                setFilterMonth('');
+              }}
               className="text-xs font-semibold text-slate-400 hover:text-slate-700 cursor-pointer"
             >
               Clear
