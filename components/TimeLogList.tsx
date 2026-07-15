@@ -46,8 +46,44 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
   const [filterEndDate, setFilterEndDate] = useState<string>('');
   const [searchText, setSearchText] = useState<string>('');
 
+  // Client-side computed date strings to avoid SSR hydration mismatches
+  const [dateStrings, setDateStrings] = useState<{
+    today: string;
+    yesterday: string;
+    thisWeekStart: string;
+  } | null>(null);
+
   const logs = logsList || localLogs;
   const projects = projectsList || localProjects;
+
+  // Helper to format date as YYYY-MM-DD
+  const formatLocalDate = (date: Date) => {
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  // Initialize client-side dates and set today's logs as default
+  useEffect(() => {
+    const t = new Date();
+    const today = formatLocalDate(t);
+
+    const y = new Date();
+    y.setDate(y.getDate() - 1);
+    const yesterday = formatLocalDate(y);
+
+    const w = new Date();
+    const day = w.getDay();
+    const diff = w.getDate() - day + (day === 0 ? -6 : 1); // standard work week starting Monday
+    const thisWeekStart = formatLocalDate(new Date(w.setDate(diff)));
+
+    Promise.resolve().then(() => {
+      setDateStrings({ today, yesterday, thisWeekStart });
+      setFilterStartDate(today);
+      setFilterEndDate(today);
+    });
+  }, []);
 
   // 2. Fetch fallbacks if not supplied by parent
   useEffect(() => {
@@ -242,6 +278,69 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
       {error && (
         <div className="rounded-xl bg-rose-50 border-l-4 border-rose-500 p-3.5 text-xs text-rose-700 font-semibold mb-5">
           {error}
+        </div>
+      )}
+
+      {/* Quick Date Presets */}
+      {dateStrings && (
+        <div className="flex flex-wrap items-center gap-2 mb-5">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Quick Date Presets:</span>
+          <button
+            type="button"
+            onClick={() => {
+              setFilterStartDate(dateStrings.today);
+              setFilterEndDate(dateStrings.today);
+            }}
+            className={`px-3 py-1 text-xs font-semibold rounded-full border transition-all cursor-pointer ${
+              filterStartDate === dateStrings.today && filterEndDate === dateStrings.today
+                ? 'bg-sky-600 border-sky-600 text-white shadow-sm scale-105'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setFilterStartDate(dateStrings.yesterday);
+              setFilterEndDate(dateStrings.yesterday);
+            }}
+            className={`px-3 py-1 text-xs font-semibold rounded-full border transition-all cursor-pointer ${
+              filterStartDate === dateStrings.yesterday && filterEndDate === dateStrings.yesterday
+                ? 'bg-sky-600 border-sky-600 text-white shadow-sm scale-105'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            Yesterday
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setFilterStartDate(dateStrings.thisWeekStart);
+              setFilterEndDate(dateStrings.today);
+            }}
+            className={`px-3 py-1 text-xs font-semibold rounded-full border transition-all cursor-pointer ${
+              filterStartDate === dateStrings.thisWeekStart && filterEndDate === dateStrings.today
+                ? 'bg-sky-600 border-sky-600 text-white shadow-sm scale-105'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            This Week
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setFilterStartDate('');
+              setFilterEndDate('');
+            }}
+            className={`px-3 py-1 text-xs font-semibold rounded-full border transition-all cursor-pointer ${
+              !filterStartDate && !filterEndDate
+                ? 'bg-sky-600 border-sky-600 text-white shadow-sm scale-105'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            All Time
+          </button>
         </div>
       )}
 
