@@ -30,7 +30,7 @@ export interface ResourceAttendanceItem {
   date: string;
   punchIn: string | null;
   punchOut: string | null;
-  status: 'Present' | 'In Progress' | 'WFH' | 'Leave' | 'Absent';
+  status: 'Present' | 'WFH' | 'Leave' | 'Absent';
   notes: string;
   shiftDuration: string;
   recordId: string | null;
@@ -206,7 +206,7 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
 
       return employeeProfiles.map(p => {
         const log = userLogsMap.get(p.id);
-        let status: 'Present' | 'In Progress' | 'WFH' | 'Leave' | 'Absent' = 'Absent';
+        let status: 'Present' | 'WFH' | 'Leave' | 'Absent' = 'Absent';
         let shiftDuration = 'N/A';
         let notes = 'Not Attended Yet';
 
@@ -218,13 +218,10 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
           } else if (log.status === 'Leave') {
             status = 'Leave';
             notes = notes || 'On Leave';
-          } else if (log.punch_out) {
+          } else if (log.punch_in || log.punch_out) {
             status = 'Present';
-            shiftDuration = getShiftDuration(log.punch_in, log.punch_out);
-            notes = notes || 'Completed Shift';
-          } else if (log.punch_in) {
-            status = 'In Progress';
-            notes = notes || 'Shift Active';
+            shiftDuration = log.punch_out ? getShiftDuration(log.punch_in, log.punch_out) : 'In Progress';
+            notes = notes || (log.punch_out ? 'Completed Shift' : 'Punched In');
           }
         }
 
@@ -248,7 +245,7 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
     // Otherwise (Historical or employee personal logs)
     return logs.map(log => {
       const p = profilesMap.get(log.user_id);
-      let status: 'Present' | 'In Progress' | 'WFH' | 'Leave' | 'Absent' = 'Present';
+      let status: 'Present' | 'WFH' | 'Leave' | 'Absent' = 'Present';
       let shiftDuration = 'N/A';
       let notes = log.notes || '';
 
@@ -256,11 +253,9 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
         status = 'WFH';
       } else if (log.status === 'Leave') {
         status = 'Leave';
-      } else if (log.punch_out) {
+      } else if (log.punch_in || log.punch_out) {
         status = 'Present';
-        shiftDuration = getShiftDuration(log.punch_in, log.punch_out);
-      } else {
-        status = 'In Progress';
+        shiftDuration = log.punch_out ? getShiftDuration(log.punch_in, log.punch_out) : 'In Progress';
       }
 
       return {
@@ -302,13 +297,12 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
   const kpiMetrics = useMemo(() => {
     const total = masterResourceList.length;
     const present = masterResourceList.filter(r => r.status === 'Present').length;
-    const working = masterResourceList.filter(r => r.status === 'In Progress').length;
     const wfh = masterResourceList.filter(r => r.status === 'WFH').length;
     const leave = masterResourceList.filter(r => r.status === 'Leave').length;
     const absent = masterResourceList.filter(r => r.status === 'Absent').length;
-    const attendanceRate = total > 0 ? Math.round(((present + working + wfh) / total) * 100) : 0;
+    const attendanceRate = total > 0 ? Math.round(((present + wfh) / total) * 100) : 0;
 
-    return { total, present, working, wfh, leave, absent, attendanceRate };
+    return { total, present, wfh, leave, absent, attendanceRate };
   }, [masterResourceList]);
 
   // 5. Initialize edit state when selected item changes
@@ -439,32 +433,48 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
     }
   };
 
-  // 8. Enhanced Excel / CSV Export (Includes All Team Resources + Header Summary)
+  // 8. Enhanced Native CSV Export with Present-First Priority Sorting & UTF-8 BOM
   const downloadExcelSheet = () => {
     if (filteredResources.length === 0) return;
 
     const reportDate = filterDate || filterMonth || new Date().toLocaleDateString("en-CA");
     const generatedAt = new Date().toLocaleString();
 
+    // Priority Status Order: Present -> WFH -> Leave -> Absent -> Alphabetical by name
+    const statusPriority: Record<string, number> = {
+      'Present': 1,
+      'WFH': 2,
+      'Leave': 3,
+      'Absent': 4
+    };
+
+    const sortedResources = [...filteredResources]
+      .filter(item => item.userRole !== 'admin')
+      .sort((a, b) => {
+        const pA = statusPriority[a.status] || 99;
+        const pB = statusPriority[b.status] || 99;
+        if (pA !== pB) return pA - pB;
+        return a.userName.localeCompare(b.userName);
+      });
+
     // Summary Section
     const summaryRows = [
-      ['BRAC TIME TRACKER - COMPLETE WORKFORCE ATTENDANCE REPORT'],
-      [`Report Date / Filter: ${reportDate}`],
-      [`Generated At: ${generatedAt}`],
+      ['Attendance Sheet for BRAC IT Augmented Resources at BRAC'],
+      [`REPORT DATE: ${reportDate}`],
+      [`GENERATED AT: ${generatedAt}`],
       [''],
       ['KPI SUMMARY'],
-      ['Total Team Size', 'Present (Completed)', 'Working Now (In Progress)', 'Work From Home (WFH)', 'On Leave', 'Absent (Not Attended)', 'Attendance Rate'],
+      ['Total Team Size', 'Present', 'Work From Home (WFH)', 'On Leave', 'Absent (Not Attended)', 'Attendance Rate'],
       [
         kpiMetrics.total,
         kpiMetrics.present,
-        kpiMetrics.working,
         kpiMetrics.wfh,
         kpiMetrics.leave,
         kpiMetrics.absent,
         `${kpiMetrics.attendanceRate}%`
       ],
       [''],
-      ['DETAILED EMPLOYEE ATTENDANCE ROSTER SHEET']
+      ['DETAILED EMPLOYEE ATTENDANCE ROSTER SHEET (SORTED BY PRESENT STATUS)']
     ];
 
     const tableHeaders = [
@@ -479,19 +489,17 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
       'Notes / Remarks'
     ];
 
-    const dataRows = filteredResources
-      .filter(item => item.userRole !== 'admin')
-      .map(item => [
-        item.userName,
-        item.userPin,
-        item.date,
-        getDayName(item.date),
-        item.status,
-        formatTime(item.punchIn),
-        formatTime(item.punchOut),
-        item.shiftDuration,
-        item.notes || 'N/A'
-      ]);
+    const dataRows = sortedResources.map(item => [
+      item.userName,
+      item.userPin,
+      item.date,
+      getDayName(item.date),
+      item.status,
+      formatTime(item.punchIn),
+      formatTime(item.punchOut),
+      item.shiftDuration,
+      item.notes || 'N/A'
+    ]);
 
     // Combine lines with proper CSV quoting and BOM for Excel UTF-8 recognition
     const csvLines = [
@@ -500,12 +508,12 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
       ...dataRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
-    // Add BOM marker (\uFEFF) so Microsoft Excel opens it seamlessly
+    // Add BOM marker (\uFEFF) so Microsoft Excel opens it seamlessly without extension mismatch warnings
     const blob = new Blob(['\uFEFF' + csvLines], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `BRAC_Attendance_Sheet_${reportDate}.csv`);
+    link.setAttribute("download", `BRAC_Attendance_Report_${reportDate}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -601,7 +609,7 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
 
       {/* Admin Summary KPI Counters */}
       {isAdmin && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           {/* KPI 1: Total Team */}
           <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm text-center">
             <span className="block text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Total Team</span>
@@ -613,31 +621,24 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
           <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4 shadow-sm text-center">
             <span className="block text-[9px] font-extrabold uppercase tracking-wider text-emerald-700">Present</span>
             <span className="mt-1 block text-2xl font-black text-emerald-700">{kpiMetrics.present}</span>
-            <span className="text-[9px] font-semibold text-emerald-600">Shift Completed</span>
+            <span className="text-[9px] font-semibold text-emerald-600">Punched In</span>
           </div>
 
-          {/* KPI 3: Working Now */}
-          <div className="rounded-2xl border border-sky-100 bg-sky-50/40 p-4 shadow-sm text-center">
-            <span className="block text-[9px] font-extrabold uppercase tracking-wider text-sky-700">Working Now</span>
-            <span className="mt-1 block text-2xl font-black text-sky-700">{kpiMetrics.working}</span>
-            <span className="text-[9px] font-semibold text-sky-600">Active Shift</span>
-          </div>
-
-          {/* KPI 4: WFH */}
+          {/* KPI 3: WFH */}
           <div className="rounded-2xl border border-amber-100 bg-amber-50/40 p-4 shadow-sm text-center">
             <span className="block text-[9px] font-extrabold uppercase tracking-wider text-amber-700">WFH</span>
             <span className="mt-1 block text-2xl font-black text-amber-700">{kpiMetrics.wfh}</span>
             <span className="text-[9px] font-semibold text-amber-600">Work From Home</span>
           </div>
 
-          {/* KPI 5: Leave */}
+          {/* KPI 4: Leave */}
           <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-4 shadow-sm text-center">
             <span className="block text-[9px] font-extrabold uppercase tracking-wider text-violet-700">On Leave</span>
             <span className="mt-1 block text-2xl font-black text-violet-700">{kpiMetrics.leave}</span>
             <span className="text-[9px] font-semibold text-violet-600">Approved Leave</span>
           </div>
 
-          {/* KPI 6: Absent */}
+          {/* KPI 5: Absent */}
           <div className="rounded-2xl border border-rose-100 bg-rose-50/40 p-4 shadow-sm text-center">
             <span className="block text-[9px] font-extrabold uppercase tracking-wider text-rose-700">Absent</span>
             <span className="mt-1 block text-2xl font-black text-rose-700">{kpiMetrics.absent}</span>
@@ -678,17 +679,17 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
 
               {/* Status Filter Buttons */}
               <div className="flex bg-slate-100 p-1 rounded-xl">
-                {(['all', 'Present', 'In Progress', 'WFH', 'Leave', 'Absent'] as const).map((st) => (
+                {(['all', 'Present', 'WFH', 'Leave', 'Absent'] as const).map((st) => (
                   <button
                     key={st}
                     onClick={() => setStatusFilter(st)}
-                    className={`px-2 py-1 rounded-lg text-[9px] font-extrabold capitalize transition-all cursor-pointer ${
+                    className={`px-2.5 py-1 rounded-lg text-[9px] font-extrabold capitalize transition-all cursor-pointer ${
                       statusFilter === st
                         ? "bg-white text-slate-900 shadow-sm"
                         : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    {st === 'In Progress' ? 'Working' : st}
+                    {st}
                   </button>
                 ))}
               </div>
@@ -727,8 +728,6 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
                       switch (st) {
                         case 'Present':
                           return <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700">Present</span>;
-                        case 'In Progress':
-                          return <span className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-0.5 text-xs font-bold text-sky-700 animate-pulse">Working Now</span>;
                         case 'WFH':
                           return <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-700">WFH</span>;
                         case 'Leave':
@@ -898,8 +897,7 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
                       onChange={(e) => setEditStatus(e.target.value)}
                       className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
                     >
-                      <option value="Present">Present (Completed Shift)</option>
-                      <option value="In Progress">Working Now (In Progress)</option>
+                      <option value="Present">Present (Punched In)</option>
                       <option value="WFH">Work From Home (WFH)</option>
                       <option value="Leave">On Leave</option>
                       <option value="Absent">Absent (Not Attended)</option>
@@ -986,9 +984,9 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
                           <span className="mt-0.5 block text-2xl font-black text-emerald-600">{selectedItem.shiftDuration}</span>
                         </div>
                       )}
-                      {selectedItem.status === 'In Progress' && (
-                        <div className="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 animate-pulse">
-                          Shift In Progress
+                      {selectedItem.status === 'Present' && (
+                        <div className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                          Present
                         </div>
                       )}
                       {selectedItem.status === 'WFH' && (

@@ -229,15 +229,13 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
       const wfhRecord = userRecords.find(a => a.status === 'WFH');
       const leaveRecord = userRecords.find(a => a.status === 'Leave');
 
-      let status: 'working' | 'completed' | 'wfh' | 'leave' | 'offline' = 'offline';
+      let status: 'present' | 'wfh' | 'leave' | 'offline' = 'offline';
       if (wfhRecord) {
         status = 'wfh';
       } else if (leaveRecord) {
         status = 'leave';
-      } else if (activeRecord) {
-        status = 'working';
-      } else if (lastCompletedRecord) {
-        status = 'completed';
+      } else if (activeRecord || lastCompletedRecord || userRecords.length > 0) {
+        status = 'present';
       }
 
       let minutesToday = 0;
@@ -636,16 +634,10 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
                     </div>
 
                     {/* Status Badge */}
-                    {w.status === 'working' && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-2 py-0.5 text-[9px] font-extrabold text-sky-700 animate-pulse">
-                        <span className="h-1.5 w-1.5 rounded-full bg-sky-500"></span>
-                        Working Now
-                      </span>
-                    )}
-                    {w.status === 'completed' && (
+                    {w.status === 'present' && (
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-extrabold text-emerald-700">
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-                        Completed
+                        Present
                       </span>
                     )}
                     {w.status === 'wfh' && (
@@ -663,7 +655,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
                     {w.status === 'offline' && (
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-extrabold text-slate-500">
                         <span className="h-1.5 w-1.5 rounded-full bg-slate-400"></span>
-                        Offline
+                        Absent
                       </span>
                     )}
                   </div>
