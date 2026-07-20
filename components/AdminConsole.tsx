@@ -7,6 +7,7 @@ import TimeLogList from './TimeLogList';
 import ProjectManager from './ProjectManager';
 import TeamManager from './TeamManager';
 import SprintTracker from './SprintTracker';
+import BillingManager from './BillingManager';
 
 interface AdminConsoleProps {
   userName: string;
@@ -20,7 +21,7 @@ interface AdminConsoleProps {
   triggerRefresh: () => void;
 }
 
-type AdminTab = "dashboard" | "attendance" | "explorer" | "projects" | "team" | "sprints";
+type AdminTab = "dashboard" | "attendance" | "explorer" | "projects" | "team" | "sprints" | "billing";
 
 export default function AdminConsole({
   userName,
@@ -169,6 +170,21 @@ export default function AdminConsole({
             </svg>
             Sprint Tracker
           </button>
+
+          {/* Tab 7: Billing Manager (Admin Only) */}
+          <button
+            onClick={() => setActiveTab("billing")}
+            className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "billing"
+                ? "bg-sky-600 text-white shadow-sm shadow-sky-600/10"
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Billing Manager
+          </button>
         </nav>
 
         {/* Sidebar Footer - Sign Out */}
@@ -198,6 +214,7 @@ export default function AdminConsole({
               {activeTab === "projects" && "Project Settings"}
               {activeTab === "team" && "Team Management"}
               {activeTab === "sprints" && "Sprint Tracker"}
+              {activeTab === "billing" && "Billing Manager"}
             </h1>
           </div>
 
@@ -266,6 +283,10 @@ export default function AdminConsole({
                 currentUserId={session?.user?.id}
                 onRefresh={triggerRefresh}
               />
+            )}
+
+            {activeTab === "billing" && (
+              <BillingManager projectsList={projects} />
             )}
           </div>
         </main>

@@ -37,6 +37,7 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 # time_ticker
 
 
+
 supabase db pass:
 
 ronto10203050
