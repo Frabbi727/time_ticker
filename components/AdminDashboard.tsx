@@ -28,6 +28,7 @@ interface AttendanceRecord {
   date: string;
   punch_in: string;
   punch_out: string | null;
+  status?: string;
   userName?: string;
   userPin?: string;
 }
@@ -43,7 +44,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
   const [selectedUserFilter, setSelectedUserFilter] = useState<string>('');
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'working' | 'completed' | 'offline'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'working' | 'completed' | 'wfh' | 'leave' | 'offline'>('all');
   const [roleFilter, setRoleFilter] = useState<string>('');
 
   const todayStr = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
@@ -225,8 +226,15 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
         .filter(a => a.punch_out)
         .sort((a, b) => new Date(b.punch_out!).getTime() - new Date(a.punch_out!).getTime())[0] || null;
       
-      let status: 'working' | 'completed' | 'offline' = 'offline';
-      if (activeRecord) {
+      const wfhRecord = userRecords.find(a => a.status === 'WFH');
+      const leaveRecord = userRecords.find(a => a.status === 'Leave');
+
+      let status: 'working' | 'completed' | 'wfh' | 'leave' | 'offline' = 'offline';
+      if (wfhRecord) {
+        status = 'wfh';
+      } else if (leaveRecord) {
+        status = 'leave';
+      } else if (activeRecord) {
         status = 'working';
       } else if (lastCompletedRecord) {
         status = 'completed';
@@ -544,7 +552,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
             </select>
             {/* Status Filter */}
             <div className="flex bg-slate-150 p-1 rounded-xl w-full sm:w-auto">
-              {(['all', 'working', 'completed', 'offline'] as const).map((filter) => (
+              {(['all', 'working', 'completed', 'wfh', 'leave', 'offline'] as const).map((filter) => (
                 <button
                   key={filter}
                   onClick={() => setStatusFilter(filter)}
@@ -638,6 +646,18 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-extrabold text-emerald-700">
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
                         Completed
+                      </span>
+                    )}
+                    {w.status === 'wfh' && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-extrabold text-amber-700">
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                        WFH
+                      </span>
+                    )}
+                    {w.status === 'leave' && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2 py-0.5 text-[9px] font-extrabold text-violet-700">
+                        <span className="h-1.5 w-1.5 rounded-full bg-violet-500"></span>
+                        On Leave
                       </span>
                     )}
                     {w.status === 'offline' && (

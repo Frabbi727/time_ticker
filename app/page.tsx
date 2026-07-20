@@ -13,6 +13,7 @@ import AdminDashboard from "@/components/AdminDashboard";
 import AdminConsole from "@/components/AdminConsole";
 import SprintTracker from "@/components/SprintTracker";
 import TeamManager from "@/components/TeamManager";
+import LeaveRequestManager from "@/components/LeaveRequestManager";
 
 // --- Types ---
 interface Project {
@@ -37,7 +38,7 @@ export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
 
-  const [activeTab, setActiveTab] = useState<"tracker" | "explorer" | "projects" | "attendance" | "admin_dashboard" | "sprints" | "team">("tracker");
+  const [activeTab, setActiveTab] = useState<"tracker" | "explorer" | "projects" | "attendance" | "leave_wfh" | "admin_dashboard" | "sprints" | "team">("tracker");
   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -382,6 +383,19 @@ export default function Home() {
                 My Attendance
               </button>
               <button
+                onClick={() => setActiveTab("leave_wfh")}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === "leave_wfh"
+                    ? "bg-white text-sky-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
+                }`}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                </svg>
+                My Leave & WFH
+              </button>
+              <button
                 onClick={() => setActiveTab("sprints")}
                 className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === "sprints"
@@ -582,6 +596,15 @@ export default function Home() {
             {/* Tab 4: Attendance Explorer */}
             {activeTab === "attendance" && (
               <AttendanceExplorer isAdmin={false} />
+            )}
+
+            {/* Tab 4.5: Leave & WFH Portal */}
+            {activeTab === "leave_wfh" && (
+              <LeaveRequestManager
+                isAdmin={false}
+                currentUserId={session.user.id}
+                onRefresh={triggerRefresh}
+              />
             )}
 
             {/* Tab 5: Sprint Tracker */}

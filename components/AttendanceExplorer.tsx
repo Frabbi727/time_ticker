@@ -1,20 +1,39 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 
 interface AttendanceRecord {
-  id: string;
+  id?: string;
   user_id: string;
   date: string;
-  punch_in: string;
+  punch_in: string | null;
   punch_out: string | null;
-  created_at: string;
+  status?: string;
+  notes?: string;
+  created_at?: string;
 }
 
-interface JoinedAttendanceRecord extends AttendanceRecord {
+interface Profile {
+  id: string;
+  name: string;
+  pin: string;
+  role?: string;
+}
+
+export interface ResourceAttendanceItem {
+  id?: string;
+  userId: string;
   userName: string;
   userPin: string;
+  userRole: string;
+  date: string;
+  punchIn: string | null;
+  punchOut: string | null;
+  status: 'Present' | 'In Progress' | 'WFH' | 'Leave' | 'Absent';
+  notes: string;
+  shiftDuration: string;
+  recordId: string | null;
 }
 
 interface AttendanceExplorerProps {
@@ -22,10 +41,11 @@ interface AttendanceExplorerProps {
 }
 
 export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps) {
-  const [logs, setLogs] = useState<JoinedAttendanceRecord[]>([]);
+  const [logs, setLogs] = useState<AttendanceRecord[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [selectedLog, setSelectedLog] = useState<JoinedAttendanceRecord | null>(null);
-  
+  const [selectedItem, setSelectedItem] = useState<ResourceAttendanceItem | null>(null);
+
   // Filtering state
   const [filterDate, setFilterDate] = useState<string>(() => {
     if (isAdmin) {
@@ -43,36 +63,32 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
     }
     return '';
   });
-  
+
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [searchTerm, setSearchTerm] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
-  // Editing state
+  // Status Edit State
   const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [editStatus, setEditStatus] = useState<string>('Present');
   const [editDate, setEditDate] = useState<string>('');
   const [editPunchIn, setEditPunchIn] = useState<string>('');
   const [editPunchOut, setEditPunchOut] = useState<string>('');
+  const [editNotes, setEditNotes] = useState<string>('');
   const [editLoading, setEditLoading] = useState<boolean>(false);
 
-  // Adding state
+  // Manual Add State
   const [isAdding, setIsAdding] = useState<boolean>(false);
-  const [addDate, setAddDate] = useState<string>(() => {
-    const d = new Date();
-    return d.toLocaleDateString("en-CA"); // YYYY-MM-DD in local time
-  });
+  const [addUserId, setAddUserId] = useState<string>('');
+  const [addStatus, setAddStatus] = useState<string>('Present');
+  const [addDate, setAddDate] = useState<string>(() => new Date().toLocaleDateString("en-CA"));
   const [addPunchIn, setAddPunchIn] = useState<string>('09:00');
   const [addPunchOut, setAddPunchOut] = useState<string>('17:00');
-  const [addUserId, setAddUserId] = useState<string>('');
+  const [addNotes, setAddNotes] = useState<string>('');
   const [addLoading, setAddLoading] = useState<boolean>(false);
-  const [profiles, setProfiles] = useState<{ id: string; name: string; pin: string }[]>([]);
 
-  const startAdding = () => {
-    setSelectedLog(null);
-    setIsAdding(true);
-    setError(null);
-  };
-
-  // 1. Fetch all attendance logs and join with profile information in Javascript
-  const fetchLogs = async () => {
+  // 1. Fetch attendance records and profiles
+  const fetchData = async () => {
     setIsLoading(true);
     setError(null);
     try {
@@ -83,76 +99,63 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
         .order('date', { ascending: false });
 
       if (fetchError) throw fetchError;
+      setLogs(logsData || []);
 
-      // Fetch profiles to map names and PINs
+      // Fetch profiles
       const { data: profilesData, error: profilesError } = await supabase
         .from('profiles')
-        .select('id, name, pin');
+        .select('id, name, pin, role');
 
-      if (profilesError) throw profilesError;
-
-      setProfiles(profilesData || []);
-
-      const profilesMap = new Map(profilesData?.map(p => [p.id, p]) || []);
-
-      const joined: JoinedAttendanceRecord[] = (logsData || []).map(log => ({
-        ...log,
-        userName: profilesMap.get(log.user_id)?.name || 'Unknown User',
-        userPin: profilesMap.get(log.user_id)?.pin || 'N/A'
-      }));
-
-      setLogs(joined);
+      if (profilesError) {
+        console.warn('Could not fetch profiles via direct query, attempting RPC:', profilesError);
+        const { data: rpcProfiles } = await supabase.rpc('get_team_profiles');
+        if (rpcProfiles) setProfiles(rpcProfiles);
+      } else if (profilesData) {
+        setProfiles(profilesData);
+      }
     } catch (err: unknown) {
-      console.error('Error fetching attendance logs:', err);
-      setError('Failed to fetch attendance history.');
+      console.error('Error fetching attendance data:', err);
+      setError('Failed to fetch attendance records.');
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchLogs();
+    fetchData();
   }, []);
 
-  // 2. Initializing edit states when selected log changes
-  useEffect(() => {
-    if (selectedLog) {
-      setEditDate(selectedLog.date);
-      setEditPunchIn(getTimeStringFromIso(selectedLog.punch_in));
-      setEditPunchOut(getTimeStringFromIso(selectedLog.punch_out));
-      setIsAdding(false);
-    } else {
-      setIsEditing(false);
-    }
-  }, [selectedLog]);
-
-  // 3. Formatting & Parsing Helpers
-  const formatTime = (isoString: string) => {
+  // Helpers
+  const formatTime = (isoString: string | null) => {
+    if (!isoString) return '--:--';
     return new Date(isoString).toLocaleTimeString("en-US", {
       hour: '2-digit',
       minute: '2-digit',
-      second: '2-digit',
       hour12: true
     });
   };
 
   const formatDate = (dateStr: string) => {
+    if (!dateStr) return '';
     const d = new Date(dateStr + 'T00:00:00');
     return d.toLocaleDateString("en-US", {
-      weekday: 'long',
-      month: 'long',
+      weekday: 'short',
+      month: 'short',
       day: 'numeric',
       year: 'numeric'
     });
   };
 
   const getDayName = (dateStr: string) => {
+    if (!dateStr) return '';
     const d = new Date(dateStr + 'T00:00:00');
     return d.toLocaleDateString("en-US", { weekday: 'long' });
   };
 
-  const getShiftDuration = (start: string, end: string) => {
+  const getShiftDuration = (start: string | null, end: string | null) => {
+    if (!start || !end) return 'N/A';
     const diff = new Date(end).getTime() - new Date(start).getTime();
+    if (isNaN(diff) || diff <= 0) return 'N/A';
     const hrs = Math.floor(diff / 3600000);
     const mins = Math.round((diff % 3600000) / 60000);
     return `${hrs}h ${mins}m`;
@@ -174,83 +177,230 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
     return d.toISOString();
   };
 
-  // 4. Save Edited Record
-  const handleSaveEdit = async () => {
-    if (!selectedLog) return;
+  const getRoleBadgeLabel = (roleStr?: string) => {
+    switch (roleStr) {
+      case 'admin': return 'Admin';
+      case 'software_engineer': return 'Engineer';
+      case 'ba': return 'BA';
+      case 'project_manager': return 'PM';
+      case 'designer': return 'Designer';
+      case 'qa': return 'QA';
+      case 'devops': return 'DevOps';
+      case 'manager': return 'Manager';
+      default: return 'Employee';
+    }
+  };
+
+  // 2. Computed Resource Attendance Master Sheet (Includes all profiles when viewing by date)
+  const masterResourceList = useMemo<ResourceAttendanceItem[]>(() => {
+    const profilesMap = new Map(profiles.map(p => [p.id, p]));
+    const targetDate = filterDate || (isAdmin ? new Date().toLocaleDateString("en-CA") : '');
+
+    // Filter out System Admin users (only include employees)
+    const employeeProfiles = profiles.filter(p => p.role !== 'admin');
+
+    // If Admin viewing a specific date (or today's default view)
+    if (isAdmin && targetDate) {
+      const logsForDate = logs.filter(l => l.date === targetDate);
+      const userLogsMap = new Map(logsForDate.map(l => [l.user_id, l]));
+
+      return employeeProfiles.map(p => {
+        const log = userLogsMap.get(p.id);
+        let status: 'Present' | 'In Progress' | 'WFH' | 'Leave' | 'Absent' = 'Absent';
+        let shiftDuration = 'N/A';
+        let notes = 'Not Attended Yet';
+
+        if (log) {
+          notes = log.notes || '';
+          if (log.status === 'WFH') {
+            status = 'WFH';
+            notes = notes || 'Work From Home';
+          } else if (log.status === 'Leave') {
+            status = 'Leave';
+            notes = notes || 'On Leave';
+          } else if (log.punch_out) {
+            status = 'Present';
+            shiftDuration = getShiftDuration(log.punch_in, log.punch_out);
+            notes = notes || 'Completed Shift';
+          } else if (log.punch_in) {
+            status = 'In Progress';
+            notes = notes || 'Shift Active';
+          }
+        }
+
+        return {
+          id: log?.id,
+          userId: p.id,
+          userName: p.name,
+          userPin: p.pin,
+          userRole: p.role || 'employee',
+          date: targetDate,
+          punchIn: log?.punch_in || null,
+          punchOut: log?.punch_out || null,
+          status,
+          notes,
+          shiftDuration,
+          recordId: log?.id || null
+        };
+      });
+    }
+
+    // Otherwise (Historical or employee personal logs)
+    return logs.map(log => {
+      const p = profilesMap.get(log.user_id);
+      let status: 'Present' | 'In Progress' | 'WFH' | 'Leave' | 'Absent' = 'Present';
+      let shiftDuration = 'N/A';
+      let notes = log.notes || '';
+
+      if (log.status === 'WFH') {
+        status = 'WFH';
+      } else if (log.status === 'Leave') {
+        status = 'Leave';
+      } else if (log.punch_out) {
+        status = 'Present';
+        shiftDuration = getShiftDuration(log.punch_in, log.punch_out);
+      } else {
+        status = 'In Progress';
+      }
+
+      return {
+        id: log.id,
+        userId: log.user_id,
+        userName: p?.name || 'Unknown Employee',
+        userPin: p?.pin || 'N/A',
+        userRole: p?.role || 'employee',
+        date: log.date,
+        punchIn: log.punch_in,
+        punchOut: log.punch_out,
+        status,
+        notes,
+        shiftDuration,
+        recordId: log.id || null
+      };
+    });
+  }, [logs, profiles, filterDate, isAdmin]);
+
+  // 3. Filtered Resource List
+  const filteredResources = useMemo(() => {
+    return masterResourceList.filter(item => {
+      // Month Filter
+      if (filterMonth && !item.date.startsWith(filterMonth)) return false;
+      // Search Term Filter
+      if (searchTerm) {
+        const term = searchTerm.toLowerCase();
+        const matchesName = item.userName.toLowerCase().includes(term);
+        const matchesPin = item.userPin.toLowerCase().includes(term);
+        if (!matchesName && !matchesPin) return false;
+      }
+      // Status Filter
+      if (statusFilter !== 'all' && item.status !== statusFilter) return false;
+      return true;
+    });
+  }, [masterResourceList, filterMonth, searchTerm, statusFilter]);
+
+  // 4. Summary KPI Metrics for Selected View
+  const kpiMetrics = useMemo(() => {
+    const total = masterResourceList.length;
+    const present = masterResourceList.filter(r => r.status === 'Present').length;
+    const working = masterResourceList.filter(r => r.status === 'In Progress').length;
+    const wfh = masterResourceList.filter(r => r.status === 'WFH').length;
+    const leave = masterResourceList.filter(r => r.status === 'Leave').length;
+    const absent = masterResourceList.filter(r => r.status === 'Absent').length;
+    const attendanceRate = total > 0 ? Math.round(((present + working + wfh) / total) * 100) : 0;
+
+    return { total, present, working, wfh, leave, absent, attendanceRate };
+  }, [masterResourceList]);
+
+  // 5. Initialize edit state when selected item changes
+  useEffect(() => {
+    if (selectedItem) {
+      setEditStatus(selectedItem.status);
+      setEditDate(selectedItem.date);
+      setEditPunchIn(getTimeStringFromIso(selectedItem.punchIn));
+      setEditPunchOut(getTimeStringFromIso(selectedItem.punchOut));
+      setEditNotes(selectedItem.notes === 'Not Attended Yet' ? '' : selectedItem.notes);
+      setIsAdding(false);
+    } else {
+      setIsEditing(false);
+    }
+  }, [selectedItem]);
+
+  // 6. Save or Update Status (Admin Override / Edit)
+  const handleSaveStatus = async () => {
+    if (!selectedItem) return;
     setEditLoading(true);
     setError(null);
     try {
-      if (!editDate || !editPunchIn) {
-        throw new Error('Date and Punch In time are required.');
+      let punchInIso = editPunchIn ? combineDateAndTime(editDate, editPunchIn) : null;
+      let punchOutIso = editPunchOut ? combineDateAndTime(editDate, editPunchOut) : null;
+
+      if (editStatus === 'Present' && (!editPunchIn || !editPunchOut)) {
+        // Default shift if present
+        if (!editPunchIn) punchInIso = combineDateAndTime(editDate, '09:00');
+        if (!editPunchOut) punchOutIso = combineDateAndTime(editDate, '17:00');
       }
 
-      const todayStr = new Date().toLocaleDateString("en-CA");
-      if (editDate > todayStr) {
-        throw new Error('Cannot log attendance for a future date.');
+      if (editStatus === 'In Progress' && !editPunchIn) {
+        punchInIso = combineDateAndTime(editDate, '09:00');
+        punchOutIso = null;
       }
 
-      const punchInIso = combineDateAndTime(editDate, editPunchIn);
-      const punchOutIso = editPunchOut ? combineDateAndTime(editDate, editPunchOut) : null;
-
-      if (punchOutIso && new Date(punchOutIso) <= new Date(punchInIso)) {
-        throw new Error('Punch Out time must be after Punch In time.');
+      if (editStatus === 'WFH' || editStatus === 'Leave') {
+        // Optional punch times for WFH / Leave
       }
 
-      const { data, error: updateError } = await supabase
-        .from('attendance')
-        .update({
+      if (editStatus === 'Absent') {
+        // If record exists in DB, delete it to mark user as absent
+        if (selectedItem.recordId) {
+          const { error: delErr } = await supabase
+            .from('attendance')
+            .delete()
+            .eq('id', selectedItem.recordId);
+          if (delErr) throw delErr;
+        }
+      } else {
+        // Insert or Upsert Attendance Record
+        const recordData: any = {
+          user_id: selectedItem.userId,
           date: editDate,
           punch_in: punchInIso,
-          punch_out: punchOutIso
-        })
-        .eq('id', selectedLog.id)
-        .select()
-        .single();
+          punch_out: editStatus === 'In Progress' ? null : punchOutIso,
+          status: editStatus,
+          notes: editNotes || (editStatus === 'WFH' ? 'Work From Home' : editStatus === 'Leave' ? 'On Leave' : '')
+        };
 
-      if (updateError) throw updateError;
-      
-      const updatedLog: JoinedAttendanceRecord = {
-        ...data,
-        userName: selectedLog.userName,
-        userPin: selectedLog.userPin
-      };
+        if (selectedItem.recordId) {
+          const { error: updateErr } = await supabase
+            .from('attendance')
+            .update(recordData)
+            .eq('id', selectedItem.recordId);
+          if (updateErr) throw updateErr;
+        } else {
+          const { error: insertErr } = await supabase
+            .from('attendance')
+            .insert(recordData);
+          if (insertErr) throw insertErr;
+        }
+      }
 
-      setSelectedLog(updatedLog);
       setIsEditing(false);
-      
-      await fetchLogs();
+      setSelectedItem(null);
+      await fetchData();
     } catch (err: unknown) {
-      console.error('Error updating attendance record:', err);
-      setError(err instanceof Error ? err.message : 'Failed to save attendance updates.');
+      console.error('Error saving attendance status:', err);
+      setError(err instanceof Error ? err.message : 'Failed to update attendance status.');
     } finally {
       setEditLoading(false);
     }
   };
 
-  // 5. Save New Record (Backdated Attendance)
+  // 7. Save New Record (Manual Add)
   const handleSaveAdd = async () => {
     setAddLoading(true);
     setError(null);
     try {
-      if (!addDate || !addPunchIn) {
-        throw new Error('Date and Punch In time are required.');
-      }
-
-      const todayStr = new Date().toLocaleDateString("en-CA");
-      if (addDate > todayStr) {
-        throw new Error('Cannot log attendance for a future date.');
-      }
-
-      if (isAdmin && !addUserId) {
-        throw new Error('Please select an employee.');
-      }
-
-      const punchInIso = combineDateAndTime(addDate, addPunchIn);
-      const punchOutIso = addPunchOut ? combineDateAndTime(addDate, addPunchOut) : null;
-
-      if (punchOutIso && new Date(punchOutIso) <= new Date(punchInIso)) {
-        throw new Error('Punch Out time must be after Punch In time.');
-      }
+      if (!addDate) throw new Error('Date is required.');
+      if (isAdmin && !addUserId) throw new Error('Please select an employee.');
 
       let targetUserId = addUserId;
       if (!isAdmin) {
@@ -259,96 +409,103 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
         targetUserId = user.id;
       }
 
+      let punchInIso = addPunchIn ? combineDateAndTime(addDate, addPunchIn) : null;
+      let punchOutIso = addPunchOut ? combineDateAndTime(addDate, addPunchOut) : null;
+
+      if (addStatus === 'In Progress') punchOutIso = null;
+
       const recordToInsert: any = {
+        user_id: targetUserId,
         date: addDate,
         punch_in: punchInIso,
         punch_out: punchOutIso,
+        status: addStatus,
+        notes: addNotes
       };
 
-      if (targetUserId) {
-        recordToInsert.user_id = targetUserId;
-      }
-
-      const { data, error: insertError } = await supabase
+      const { error: insertError } = await supabase
         .from('attendance')
-        .insert(recordToInsert)
-        .select()
-        .single();
+        .insert(recordToInsert);
 
       if (insertError) throw insertError;
 
       setIsAdding(false);
-      
-      // Reset inputs
-      setAddDate(new Date().toLocaleDateString("en-CA"));
-      setAddPunchIn('09:00');
-      setAddPunchOut('17:00');
-      setAddUserId('');
-      
-      await fetchLogs();
+      await fetchData();
     } catch (err: unknown) {
-      console.error('Error adding attendance record:', err);
+      console.error('Error adding attendance:', err);
       setError(err instanceof Error ? err.message : 'Failed to add attendance record.');
     } finally {
       setAddLoading(false);
     }
   };
 
-  // 5. Filtered Logs calculation
-  const filteredLogs = logs.filter(log => {
-    if (filterDate && log.date !== filterDate) return false;
-    if (filterMonth && !log.date.startsWith(filterMonth)) return false;
-    return true;
-  });
+  // 8. Enhanced Excel / CSV Export (Includes All Team Resources + Header Summary)
+  const downloadExcelSheet = () => {
+    if (filteredResources.length === 0) return;
 
-  // 6. CSV Download Trigger
-  const downloadCSV = () => {
-    if (filteredLogs.length === 0) return;
+    const reportDate = filterDate || filterMonth || new Date().toLocaleDateString("en-CA");
+    const generatedAt = new Date().toLocaleString();
 
-    // Define CSV headers (include User/PIN if Admin)
-    const headers = isAdmin
-      ? ['User Name', 'PIN', 'Date', 'Day', 'Punch In', 'Punch Out', 'Duration', 'Status']
-      : ['Date', 'Day', 'Punch In', 'Punch Out', 'Duration', 'Status'];
-    
-    // Format rows
-    const rows = filteredLogs.map(log => {
-      const durationStr = log.punch_out ? getShiftDuration(log.punch_in, log.punch_out) : 'N/A';
-      const status = log.punch_out ? 'Completed' : 'Active';
-      
-      if (isAdmin) {
-        return [
-          log.userName,
-          log.userPin,
-          log.date,
-          getDayName(log.date),
-          formatTime(log.punch_in),
-          log.punch_out ? formatTime(log.punch_out) : 'N/A',
-          durationStr,
-          status
-        ];
-      } else {
-        return [
-          log.date,
-          getDayName(log.date),
-          formatTime(log.punch_in),
-          log.punch_out ? formatTime(log.punch_out) : 'N/A',
-          durationStr,
-          status
-        ];
-      }
-    });
+    // Summary Section
+    const summaryRows = [
+      ['BRAC TIME TRACKER - COMPLETE WORKFORCE ATTENDANCE REPORT'],
+      [`Report Date / Filter: ${reportDate}`],
+      [`Generated At: ${generatedAt}`],
+      [''],
+      ['KPI SUMMARY'],
+      ['Total Team Size', 'Present (Completed)', 'Working Now (In Progress)', 'Work From Home (WFH)', 'On Leave', 'Absent (Not Attended)', 'Attendance Rate'],
+      [
+        kpiMetrics.total,
+        kpiMetrics.present,
+        kpiMetrics.working,
+        kpiMetrics.wfh,
+        kpiMetrics.leave,
+        kpiMetrics.absent,
+        `${kpiMetrics.attendanceRate}%`
+      ],
+      [''],
+      ['DETAILED EMPLOYEE ATTENDANCE ROSTER SHEET']
+    ];
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(value => `"${value.replace(/"/g, '""')}"`).join(','))
+    const tableHeaders = [
+      'Employee Name',
+      'PIN',
+      'Date',
+      'Day of Week',
+      'Status',
+      'Punch In Time',
+      'Punch Out Time',
+      'Total Worked Duration',
+      'Notes / Remarks'
+    ];
+
+    const dataRows = filteredResources
+      .filter(item => item.userRole !== 'admin')
+      .map(item => [
+        item.userName,
+        item.userPin,
+        item.date,
+        getDayName(item.date),
+        item.status,
+        formatTime(item.punchIn),
+        formatTime(item.punchOut),
+        item.shiftDuration,
+        item.notes || 'N/A'
+      ]);
+
+    // Combine lines with proper CSV quoting and BOM for Excel UTF-8 recognition
+    const csvLines = [
+      ...summaryRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')),
+      tableHeaders.map(v => `"${v.replace(/"/g, '""')}"`).join(','),
+      ...dataRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    // Add BOM marker (\uFEFF) so Microsoft Excel opens it seamlessly
+    const blob = new Blob(['\uFEFF' + csvLines], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    const filterName = filterDate || filterMonth || 'all';
-    link.setAttribute("download", `attendance_report_${filterName}.csv`);
+    link.setAttribute("download", `BRAC_Attendance_Sheet_${reportDate}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -357,71 +514,137 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
   return (
     <div className="space-y-6">
       {/* Header Panel */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
         <div>
-          <h2 className="text-xl font-black text-slate-900 tracking-tight">
-            {isAdmin ? 'System Attendance Explorer (Admin)' : 'Attendance Explorer'}
+          <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+            <span>📋</span> {isAdmin ? 'Workforce Attendance Explorer & Roster' : 'My Attendance Sheet'}
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            {isAdmin 
-              ? 'View, filter, edit, and export attendance logs for all registered users'
-              : 'View, inspect, and export your historical attendance logs'}
+            {isAdmin
+              ? 'Complete roster view of all team members: track punch in/out, absentees, WFH, leave, and export Excel sheets'
+              : 'Inspect your personal attendance history, shift durations, and status updates'}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+
+        {/* Date Filter & Action Controls */}
+        <div className="flex flex-wrap items-center gap-3">
           {isAdmin ? (
-            <input
-              type="date"
-              value={filterDate}
-              onChange={(e) => {
-                setFilterDate(e.target.value);
-                setFilterMonth('');
-              }}
-              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
-            />
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-extrabold uppercase text-slate-400">Date:</span>
+              <input
+                type="date"
+                value={filterDate}
+                onChange={(e) => {
+                  setFilterDate(e.target.value);
+                  setFilterMonth('');
+                }}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm"
+              />
+            </div>
           ) : (
-            <input
-              type="month"
-              value={filterMonth}
-              onChange={(e) => {
-                setFilterMonth(e.target.value);
-                setFilterDate('');
-              }}
-              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
-            />
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-extrabold uppercase text-slate-400">Month:</span>
+              <input
+                type="month"
+                value={filterMonth}
+                onChange={(e) => {
+                  setFilterMonth(e.target.value);
+                  setFilterDate('');
+                }}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm"
+              />
+            </div>
           )}
+
           {(filterDate || filterMonth) && (
             <button
               onClick={() => {
                 setFilterDate('');
                 setFilterMonth('');
               }}
-              className="text-xs font-semibold text-slate-400 hover:text-slate-700 cursor-pointer"
+              className="text-xs font-bold text-slate-400 hover:text-slate-700 cursor-pointer"
             >
-              Clear
+              Clear Filter
             </button>
           )}
+
+          {/* Excel Download Button */}
           <button
-            onClick={downloadCSV}
-            disabled={filteredLogs.length === 0}
-            className="flex items-center gap-1.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 hover:text-sky-700 border border-slate-200 hover:border-sky-100 font-bold text-xs px-4 py-2.5 shadow-sm cursor-pointer active:scale-95 transition-all"
+            onClick={downloadExcelSheet}
+            disabled={filteredResources.length === 0}
+            className="flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-emerald-100 cursor-pointer active:scale-95 transition-all disabled:opacity-50"
+            title="Download complete Excel / CSV Attendance Sheet"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            Download CSV
+            Export Excel Sheet
           </button>
-          <button
-            onClick={startAdding}
-            className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-emerald-100 cursor-pointer active:scale-95 transition-all"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Add Record
-          </button>
+
+          {isAdmin && (
+            <button
+              onClick={() => {
+                setSelectedItem(null);
+                setIsAdding(true);
+                setError(null);
+              }}
+              className="flex items-center gap-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-sky-100 cursor-pointer active:scale-95 transition-all"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Add Attendance
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Admin Summary KPI Counters */}
+      {isAdmin && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+          {/* KPI 1: Total Team */}
+          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm text-center">
+            <span className="block text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Total Team</span>
+            <span className="mt-1 block text-2xl font-black text-slate-800">{kpiMetrics.total}</span>
+            <span className="text-[9px] font-semibold text-slate-400">Registered Members</span>
+          </div>
+
+          {/* KPI 2: Present */}
+          <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4 shadow-sm text-center">
+            <span className="block text-[9px] font-extrabold uppercase tracking-wider text-emerald-700">Present</span>
+            <span className="mt-1 block text-2xl font-black text-emerald-700">{kpiMetrics.present}</span>
+            <span className="text-[9px] font-semibold text-emerald-600">Shift Completed</span>
+          </div>
+
+          {/* KPI 3: Working Now */}
+          <div className="rounded-2xl border border-sky-100 bg-sky-50/40 p-4 shadow-sm text-center">
+            <span className="block text-[9px] font-extrabold uppercase tracking-wider text-sky-700">Working Now</span>
+            <span className="mt-1 block text-2xl font-black text-sky-700">{kpiMetrics.working}</span>
+            <span className="text-[9px] font-semibold text-sky-600">Active Shift</span>
+          </div>
+
+          {/* KPI 4: WFH */}
+          <div className="rounded-2xl border border-amber-100 bg-amber-50/40 p-4 shadow-sm text-center">
+            <span className="block text-[9px] font-extrabold uppercase tracking-wider text-amber-700">WFH</span>
+            <span className="mt-1 block text-2xl font-black text-amber-700">{kpiMetrics.wfh}</span>
+            <span className="text-[9px] font-semibold text-amber-600">Work From Home</span>
+          </div>
+
+          {/* KPI 5: Leave */}
+          <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-4 shadow-sm text-center">
+            <span className="block text-[9px] font-extrabold uppercase tracking-wider text-violet-700">On Leave</span>
+            <span className="mt-1 block text-2xl font-black text-violet-700">{kpiMetrics.leave}</span>
+            <span className="text-[9px] font-semibold text-violet-600">Approved Leave</span>
+          </div>
+
+          {/* KPI 6: Absent */}
+          <div className="rounded-2xl border border-rose-100 bg-rose-50/40 p-4 shadow-sm text-center">
+            <span className="block text-[9px] font-extrabold uppercase tracking-wider text-rose-700">Absent</span>
+            <span className="mt-1 block text-2xl font-black text-rose-700">{kpiMetrics.absent}</span>
+            <span className="text-[9px] font-semibold text-rose-600">Not Attended Yet</span>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-2xl bg-rose-50 border-l-4 border-rose-500 p-4 text-xs text-rose-700 font-bold">
@@ -429,76 +652,120 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
         </div>
       )}
 
-      {/* Main Grid: List Table & Detail Panel */}
+      {/* Main Content Layout: Table List + Action Panel */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Table List View (2 Cols) */}
-        <div className="lg:col-span-2 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm overflow-hidden">
-          <h3 className="text-sm font-bold text-slate-900 mb-4">
-            {isAdmin ? 'All User Logs' : 'My Historical Logs'} ({filteredLogs.length})
-          </h3>
-          
+        <div className="lg:col-span-2 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm overflow-hidden space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-50 pb-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">
+                {isAdmin ? 'Resource Attendance Sheet' : 'My Logs'} ({filteredResources.length})
+              </h3>
+              <p className="text-[10px] text-slate-400 font-semibold">
+                {filterDate ? `Showing attendance for ${formatDate(filterDate)}` : 'Filtered list'}
+              </p>
+            </div>
+
+            {/* Controls: Search & Status Filter */}
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                placeholder="Search name/PIN..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all w-36 shadow-sm"
+              />
+
+              {/* Status Filter Buttons */}
+              <div className="flex bg-slate-100 p-1 rounded-xl">
+                {(['all', 'Present', 'In Progress', 'WFH', 'Leave', 'Absent'] as const).map((st) => (
+                  <button
+                    key={st}
+                    onClick={() => setStatusFilter(st)}
+                    className={`px-2 py-1 rounded-lg text-[9px] font-extrabold capitalize transition-all cursor-pointer ${
+                      statusFilter === st
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    {st === 'In Progress' ? 'Working' : st}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {isLoading ? (
             <div className="flex h-64 flex-col items-center justify-center gap-3">
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-sky-600 border-t-transparent"></div>
-              <p className="text-xs font-semibold text-slate-400">Fetching records...</p>
+              <p className="text-xs font-semibold text-slate-400">Loading roster sheet...</p>
             </div>
-          ) : filteredLogs.length === 0 ? (
+          ) : filteredResources.length === 0 ? (
             <div className="flex h-64 flex-col items-center justify-center text-center">
-              <p className="text-sm font-bold text-slate-500">No logs found</p>
-              <p className="text-xs text-slate-400 mt-1">There are no attendance records matching your criteria.</p>
+              <p className="text-sm font-bold text-slate-500">No matching resources found</p>
+              <p className="text-xs text-slate-400 mt-1">Adjust your date or status filters to view records.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm text-slate-700">
                 <thead>
-                  <tr className="border-b border-slate-100 text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                    {isAdmin && <th className="pb-3 font-semibold">User</th>}
+                  <tr className="border-b border-slate-100 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                    <th className="pb-3 font-semibold">Employee</th>
                     <th className="pb-3 font-semibold">Date</th>
-                    <th className="pb-3 font-semibold">Day</th>
-                    <th className="pb-3 font-semibold">In</th>
-                    <th className="pb-3 font-semibold">Out</th>
+                    <th className="pb-3 font-semibold">Punch In</th>
+                    <th className="pb-3 font-semibold">Punch Out</th>
                     <th className="pb-3 font-semibold">Duration</th>
                     <th className="pb-3 font-semibold text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {filteredLogs.map((log) => {
-                    const isSelected = selectedLog?.id === log.id;
+                  {filteredResources.map((item, idx) => {
+                    const isSelected = selectedItem?.userId === item.userId && selectedItem?.date === item.date;
+
+                    // Badge Styling Helper
+                    const getStatusBadge = (st: string) => {
+                      switch (st) {
+                        case 'Present':
+                          return <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700">Present</span>;
+                        case 'In Progress':
+                          return <span className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-0.5 text-xs font-bold text-sky-700 animate-pulse">Working Now</span>;
+                        case 'WFH':
+                          return <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-700">WFH</span>;
+                        case 'Leave':
+                          return <span className="inline-flex items-center rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-bold text-violet-700">On Leave</span>;
+                        default:
+                          return <span className="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-bold text-rose-600">Absent</span>;
+                      }
+                    };
+
                     return (
                       <tr
-                        key={log.id}
+                        key={item.userId + '_' + item.date + '_' + idx}
                         onClick={() => {
-                          setSelectedLog(log);
+                          setSelectedItem(item);
                           setIsEditing(false);
                         }}
                         className={`hover:bg-slate-50/80 transition-all cursor-pointer ${
-                          isSelected ? 'bg-sky-50/30' : ''
+                          isSelected ? 'bg-sky-50/40' : ''
                         }`}
                       >
-                        {isAdmin && (
-                          <td className="py-3.5 pr-2">
-                            <div className="font-bold text-slate-800 truncate max-w-[120px]">{log.userName}</div>
-                            <div className="text-[10px] font-semibold text-slate-400">PIN: {log.userPin}</div>
-                          </td>
-                        )}
-                        <td className="py-3.5 font-bold text-slate-800">{log.date}</td>
-                        <td className="py-3.5 text-slate-500">{getDayName(log.date)}</td>
-                        <td className="py-3.5 font-medium">{formatTime(log.punch_in)}</td>
-                        <td className="py-3.5 font-medium">{log.punch_out ? formatTime(log.punch_out) : '--:--:--'}</td>
-                        <td className="py-3.5 font-semibold text-slate-600">
-                          {log.punch_out ? getShiftDuration(log.punch_in, log.punch_out) : 'N/A'}
-                        </td>
-                        <td className="py-3.5 text-right">
-                          {log.punch_out ? (
-                            <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
-                              Completed
+                        <td className="py-3.5 pr-2">
+                          <div className="font-bold text-slate-800 truncate max-w-[140px]">{item.userName}</div>
+                          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-400 mt-0.5">
+                            <span>PIN: {item.userPin}</span>
+                            <span className="rounded bg-slate-100 px-1 text-[8px] font-bold text-slate-600 uppercase">
+                              {getRoleBadgeLabel(item.userRole)}
                             </span>
-                          ) : (
-                            <span className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-0.5 text-xs font-bold text-sky-700 animate-pulse">
-                              Active
-                            </span>
-                          )}
+                          </div>
                         </td>
+                        <td className="py-3.5 font-bold text-slate-800">
+                          {item.date}
+                          <span className="block text-[10px] font-normal text-slate-400">{getDayName(item.date)}</span>
+                        </td>
+                        <td className="py-3.5 font-medium">{formatTime(item.punchIn)}</td>
+                        <td className="py-3.5 font-medium">{formatTime(item.punchOut)}</td>
+                        <td className="py-3.5 font-semibold text-slate-600">{item.shiftDuration}</td>
+                        <td className="py-3.5 text-right">{getStatusBadge(item.status)}</td>
                       </tr>
                     );
                   })}
@@ -508,12 +775,12 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
           )}
         </div>
 
-        {/* Details & Edit Panel View (1 Col) */}
+        {/* Right Details & Admin Override Panel (1 Col) */}
         <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
           <h3 className="text-sm font-bold text-slate-900 mb-4">
-            {isAdding ? 'Add Attendance Record' : isEditing ? 'Edit Shift Record' : 'Shift Details'}
+            {isAdding ? 'Log Manual Attendance' : isEditing ? 'Manage Resource Status' : 'Resource Details'}
           </h3>
-          
+
           {isAdding ? (
             /* --- ADDING MODE PANEL --- */
             <div className="space-y-5">
@@ -523,7 +790,7 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
                   <select
                     value={addUserId}
                     onChange={(e) => setAddUserId(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
                   >
                     <option value="">Choose an employee...</option>
                     {profiles.map(p => (
@@ -536,7 +803,21 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
               )}
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Shift Date</label>
+                <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Status</label>
+                <select
+                  value={addStatus}
+                  onChange={(e) => setAddStatus(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                >
+                  <option value="Present">Present (Completed)</option>
+                  <option value="In Progress">Working Now (In Progress)</option>
+                  <option value="WFH">Work From Home (WFH)</option>
+                  <option value="Leave">On Leave</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Date</label>
                 <input
                   type="date"
                   value={addDate}
@@ -546,23 +827,39 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch In Time</label>
-                <input
-                  type="time"
-                  value={addPunchIn}
-                  onChange={(e) => setAddPunchIn(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
-                />
-              </div>
+              {(addStatus === 'Present' || addStatus === 'In Progress') && (
+                <>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch In Time</label>
+                    <input
+                      type="time"
+                      value={addPunchIn}
+                      onChange={(e) => setAddPunchIn(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                    />
+                  </div>
+
+                  {addStatus === 'Present' && (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch Out Time</label>
+                      <input
+                        type="time"
+                        value={addPunchOut}
+                        onChange={(e) => setAddPunchOut(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                      />
+                    </div>
+                  )}
+                </>
+              )}
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch Out Time (Optional)</label>
+                <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Notes / Reason</label>
                 <input
-                  type="time"
-                  value={addPunchOut}
-                  onChange={(e) => setAddPunchOut(e.target.value)}
-                  placeholder="Shift in progress"
+                  type="text"
+                  placeholder="Optional remarks..."
+                  value={addNotes}
+                  onChange={(e) => setAddNotes(e.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
                 />
               </div>
@@ -578,52 +875,80 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
                 <button
                   onClick={handleSaveAdd}
                   disabled={addLoading}
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-md shadow-emerald-100 cursor-pointer disabled:opacity-50"
+                  className="flex-1 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all shadow-md shadow-sky-100 cursor-pointer disabled:opacity-50"
                 >
-                  {addLoading ? 'Saving...' : 'Add Record'}
+                  {addLoading ? 'Saving...' : 'Save Record'}
                 </button>
               </div>
             </div>
-          ) : selectedLog ? (
+          ) : selectedItem ? (
             <div>
               {isEditing ? (
                 /* --- EDITING MODE PANEL --- */
                 <div className="space-y-5">
-                  {isAdmin && (
-                    <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 text-xs">
-                      <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">User Profile</span>
-                      <span className="block font-bold text-slate-800 mt-0.5">{selectedLog.userName} (PIN: {selectedLog.userPin})</span>
-                    </div>
-                  )}
+                  <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 text-xs">
+                    <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Employee Profile</span>
+                    <span className="block font-bold text-slate-800 mt-0.5">{selectedItem.userName} (PIN: {selectedItem.userPin})</span>
+                  </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Shift Date</label>
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Set Status</label>
+                    <select
+                      value={editStatus}
+                      onChange={(e) => setEditStatus(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                    >
+                      <option value="Present">Present (Completed Shift)</option>
+                      <option value="In Progress">Working Now (In Progress)</option>
+                      <option value="WFH">Work From Home (WFH)</option>
+                      <option value="Leave">On Leave</option>
+                      <option value="Absent">Absent (Not Attended)</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Date</label>
                     <input
                       type="date"
                       value={editDate}
-                      max={new Date().toLocaleDateString("en-CA")}
                       onChange={(e) => setEditDate(e.target.value)}
                       className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
                     />
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch In Time</label>
-                    <input
-                      type="time"
-                      value={editPunchIn}
-                      onChange={(e) => setEditPunchIn(e.target.value)}
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
-                    />
-                  </div>
+                  {(editStatus === 'Present' || editStatus === 'In Progress') && (
+                    <>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch In Time</label>
+                        <input
+                          type="time"
+                          value={editPunchIn}
+                          onChange={(e) => setEditPunchIn(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                        />
+                      </div>
+
+                      {editStatus === 'Present' && (
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch Out Time</label>
+                          <input
+                            type="time"
+                            value={editPunchOut}
+                            onChange={(e) => setEditPunchOut(e.target.value)}
+                            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
 
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch Out Time (Optional)</label>
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Notes / Remarks</label>
                     <input
-                      type="time"
-                      value={editPunchOut}
-                      onChange={(e) => setEditPunchOut(e.target.value)}
-                      placeholder="Shift not ended yet"
+                      type="text"
+                      placeholder="Reason or notes..."
+                      value={editNotes}
+                      onChange={(e) => setEditNotes(e.target.value)}
                       className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
                     />
                   </div>
@@ -637,7 +962,7 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
                       Cancel
                     </button>
                     <button
-                      onClick={handleSaveEdit}
+                      onClick={handleSaveStatus}
                       disabled={editLoading}
                       className="flex-1 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all shadow-md shadow-sky-100 cursor-pointer disabled:opacity-50"
                     >
@@ -648,71 +973,73 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
               ) : (
                 /* --- DETAILS VIEW PANEL --- */
                 <div className="space-y-6">
-                  {/* Detail Card Summary */}
+                  {/* Summary Card */}
                   <div className="rounded-2xl bg-slate-50 p-5 border border-slate-100 text-center">
-                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Shift Date</p>
-                    <h4 className="mt-1 text-base font-extrabold text-slate-800">{formatDate(selectedLog.date)}</h4>
-                    
-                    {selectedLog.punch_out ? (
-                      <>
-                        <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mt-4">Total Worked Time</p>
-                        <span className="mt-1 block text-3xl font-black text-slate-800 tracking-tight">
-                          {getShiftDuration(selectedLog.punch_in, selectedLog.punch_out)}
-                        </span>
-                      </>
-                    ) : (
-                      <div className="mt-4 inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 animate-pulse">
-                        Shift In Progress
-                      </div>
-                    )}
-                  </div>
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Selected Employee</p>
+                    <h4 className="mt-1 text-base font-extrabold text-slate-800">{selectedItem.userName}</h4>
+                    <p className="text-xs font-semibold text-slate-400 mt-0.5">PIN: {selectedItem.userPin} • {getRoleBadgeLabel(selectedItem.userRole)}</p>
 
-                  {/* Specific timestamps */}
-                  <div className="space-y-4 text-xs font-semibold text-slate-600">
-                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
-                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Logged By</span>
-                      <span className="text-slate-800 font-bold">{selectedLog.userName} (PIN: {selectedLog.userPin})</span>
-                    </div>
-                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
-                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Punch In Time</span>
-                      <span className="text-slate-800 font-bold">{formatTime(selectedLog.punch_in)}</span>
-                    </div>
-                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
-                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Punch Out Time</span>
-                      <span className="text-slate-800 font-bold">
-                        {selectedLog.punch_out ? formatTime(selectedLog.punch_out) : '--:--:--'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
-                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Record ID</span>
-                      <span className="text-slate-500 font-mono truncate max-w-[120px]" title={selectedLog.id}>{selectedLog.id}</span>
-                    </div>
-                    <div className="flex justify-between items-center py-2">
-                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Logged At</span>
-                      <span className="text-slate-500 font-bold">
-                        {new Date(selectedLog.created_at).toLocaleString()}
-                      </span>
+                    <div className="mt-4">
+                      {selectedItem.status === 'Present' && (
+                        <div>
+                          <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Shift Duration</p>
+                          <span className="mt-0.5 block text-2xl font-black text-emerald-600">{selectedItem.shiftDuration}</span>
+                        </div>
+                      )}
+                      {selectedItem.status === 'In Progress' && (
+                        <div className="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 animate-pulse">
+                          Shift In Progress
+                        </div>
+                      )}
+                      {selectedItem.status === 'WFH' && (
+                        <div className="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
+                          Work From Home
+                        </div>
+                      )}
+                      {selectedItem.status === 'Leave' && (
+                        <div className="inline-flex items-center rounded-full bg-violet-50 px-3 py-1 text-xs font-bold text-violet-700">
+                          On Leave
+                        </div>
+                      )}
+                      {selectedItem.status === 'Absent' && (
+                        <div className="inline-flex items-center rounded-full bg-rose-50 px-3 py-1 text-xs font-bold text-rose-600">
+                          Not Attended Yet
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="flex gap-3">
+                  {/* Field Details */}
+                  <div className="space-y-3 text-xs font-semibold text-slate-600">
+                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
+                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Date</span>
+                      <span className="text-slate-800 font-bold">{formatDate(selectedItem.date)}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
+                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Punch In</span>
+                      <span className="text-slate-800 font-bold">{formatTime(selectedItem.punchIn)}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
+                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Punch Out</span>
+                      <span className="text-slate-800 font-bold">{formatTime(selectedItem.punchOut)}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
+                      <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Notes / Remarks</span>
+                      <span className="text-slate-700 font-semibold max-w-[150px] truncate text-right">{selectedItem.notes || 'None'}</span>
+                    </div>
+                  </div>
+
+                  {isAdmin && (
                     <button
                       onClick={() => setIsEditing(true)}
-                      className="w-full py-2.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
+                      className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all shadow-sm cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
                     >
-                      <svg className="h-3.5 w-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <svg className="h-3.5 w-3.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                       </svg>
-                      Edit Shift Log
+                      Change Status / Edit
                     </button>
-                  </div>
-
-                  <div className="rounded-2xl bg-sky-50/30 border border-sky-100 p-4">
-                    <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-sky-800">Shift Notes</h4>
-                    <p className="mt-1 text-xs text-sky-700 leading-relaxed font-semibold">
-                      This shift was logged securely via registered user authentication.
-                    </p>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
@@ -720,20 +1047,13 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
             <div className="flex flex-col items-center justify-center text-center rounded-2xl border border-dashed border-slate-200 p-6 min-h-[300px]">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-50 text-slate-400 border border-slate-100">
                 <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                 </svg>
               </div>
-              <h4 className="mt-4 text-xs font-bold text-slate-700">No Shift Selected</h4>
-              <p className="mt-1.5 text-[11px] text-slate-400 max-w-[200px] leading-relaxed">Click on any shift row in the table to view details, or log a new backdated record below.</p>
-              <button
-                onClick={startAdding}
-                className="mt-5 w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-md shadow-emerald-100 cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
-              >
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Log Attendance Manually
-              </button>
+              <h4 className="mt-4 text-xs font-bold text-slate-700">No Resource Selected</h4>
+              <p className="mt-1.5 text-[11px] text-slate-400 max-w-[200px] leading-relaxed">
+                Click on any employee row in the attendance sheet to view or update status (Present, WFH, Leave, Absent).
+              </p>
             </div>
           )}
         </div>

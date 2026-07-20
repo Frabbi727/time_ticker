@@ -8,6 +8,7 @@ import ProjectManager from './ProjectManager';
 import TeamManager from './TeamManager';
 import SprintTracker from './SprintTracker';
 import BillingManager from './BillingManager';
+import LeaveRequestManager from './LeaveRequestManager';
 
 interface AdminConsoleProps {
   userName: string;
@@ -21,7 +22,7 @@ interface AdminConsoleProps {
   triggerRefresh: () => void;
 }
 
-type AdminTab = "dashboard" | "attendance" | "explorer" | "projects" | "team" | "sprints" | "billing";
+type AdminTab = "dashboard" | "attendance" | "leave_wfh" | "explorer" | "projects" | "team" | "sprints" | "billing";
 
 export default function AdminConsole({
   userName,
@@ -79,7 +80,7 @@ export default function AdminConsole({
         </div>
 
         {/* Navigation Sidebar Tabs */}
-        <nav className="flex-1 px-4 space-y-1.5">
+        <nav className="flex-1 px-4 space-y-1.5 overflow-y-auto">
           {/* Tab 1: Dashboard Overview */}
           <button
             onClick={() => setActiveTab("dashboard")}
@@ -110,7 +111,22 @@ export default function AdminConsole({
             Attendance Explorer
           </button>
 
-          {/* Tab 3: Work Logs Explorer */}
+          {/* Tab 3: Leave & WFH Approvals */}
+          <button
+            onClick={() => setActiveTab("leave_wfh")}
+            className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "leave_wfh"
+                ? "bg-sky-600 text-white shadow-sm shadow-sky-600/10"
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Leave & WFH Approvals
+          </button>
+
+          {/* Tab 4: Work Logs Explorer */}
           <button
             onClick={() => setActiveTab("explorer")}
             className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 text-xs font-bold transition-all cursor-pointer ${
@@ -125,7 +141,7 @@ export default function AdminConsole({
             Work Logs Explorer
           </button>
 
-          {/* Tab 4: Project Settings */}
+          {/* Tab 5: Project Settings */}
           <button
             onClick={() => setActiveTab("projects")}
             className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 text-xs font-bold transition-all cursor-pointer ${
@@ -141,7 +157,7 @@ export default function AdminConsole({
             Project Manager
           </button>
 
-          {/* Tab 5: Team Management */}
+          {/* Tab 6: Team Management */}
           <button
             onClick={() => setActiveTab("team")}
             className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 text-xs font-bold transition-all cursor-pointer ${
@@ -156,7 +172,7 @@ export default function AdminConsole({
             Team Manager
           </button>
 
-          {/* Tab 6: Sprint Tracker */}
+          {/* Tab 7: Sprint Tracker */}
           <button
             onClick={() => setActiveTab("sprints")}
             className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 text-xs font-bold transition-all cursor-pointer ${
@@ -171,7 +187,7 @@ export default function AdminConsole({
             Sprint Tracker
           </button>
 
-          {/* Tab 7: Billing Manager (Admin Only) */}
+          {/* Tab 8: Billing Manager (Admin Only) */}
           <button
             onClick={() => setActiveTab("billing")}
             className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 text-xs font-bold transition-all cursor-pointer ${
@@ -210,6 +226,7 @@ export default function AdminConsole({
             <h1 className="text-sm font-bold text-slate-800">
               {activeTab === "dashboard" && "Overview Dashboard"}
               {activeTab === "attendance" && "Attendance Logs"}
+              {activeTab === "leave_wfh" && "Leave & WFH Approvals"}
               {activeTab === "explorer" && "Work Logs"}
               {activeTab === "projects" && "Project Settings"}
               {activeTab === "team" && "Team Management"}
@@ -249,6 +266,14 @@ export default function AdminConsole({
 
             {activeTab === "attendance" && (
               <AttendanceExplorer isAdmin={true} />
+            )}
+
+            {activeTab === "leave_wfh" && (
+              <LeaveRequestManager
+                isAdmin={true}
+                currentUserId={session?.user?.id}
+                onRefresh={triggerRefresh}
+              />
             )}
 
             {activeTab === "explorer" && (
