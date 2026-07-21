@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
+import BulkAttendanceModal from './BulkAttendanceModal';
 
 interface AttendanceRecord {
   id?: string;
@@ -101,6 +102,9 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
   const [addPunchOut, setAddPunchOut] = useState<string>('');
   const [addNotes, setAddNotes] = useState<string>('');
   const [addLoading, setAddLoading] = useState<boolean>(false);
+
+  // Bulk Import CSV State
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState<boolean>(false);
 
   // 1. Fetch attendance records and profiles
   const fetchData = async () => {
@@ -736,6 +740,20 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
             Export Excel Sheet
           </button>
 
+          {/* Bulk Import CSV Button for Admin */}
+          {isAdmin && (
+            <button
+              onClick={() => setIsBulkModalOpen(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-purple-100 cursor-pointer active:scale-95 transition-all"
+              title="Bulk Import Attendance from CSV/Excel"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              Bulk Import CSV
+            </button>
+          )}
+
           <button
             onClick={() => {
               setSelectedItem(null);
@@ -1243,6 +1261,16 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
           )}
         </div>
       </div>
+
+      {/* Bulk Attendance Import Modal */}
+      <BulkAttendanceModal
+        isOpen={isBulkModalOpen}
+        onClose={() => setIsBulkModalOpen(false)}
+        onSuccess={() => {
+          fetchData();
+        }}
+        profiles={profiles}
+      />
     </div>
   );
 }
