@@ -390,6 +390,9 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
             <option value="Code Review">Code Review</option>
             <option value="QA">QA / Testing</option>
             <option value="Support">Support / Ops</option>
+            <option value="Analysis">Analysis</option>
+          </select>
+          </select>
           </select>
         </div>
 
