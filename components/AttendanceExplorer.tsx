@@ -690,8 +690,10 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
                 type="date"
                 value={filterDate}
                 onChange={(e) => {
-                  setFilterDate(e.target.value);
+                  const newDate = e.target.value;
+                  setFilterDate(newDate);
                   setFilterMonth('');
+                  if (newDate) setAddDate(newDate);
                 }}
                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm"
               />
@@ -739,6 +741,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
           <button
             onClick={() => {
               setSelectedItem(null);
+              setAddDate(filterDate || new Date().toLocaleDateString("en-CA"));
               setIsAdding(true);
               setError(null);
             }}
@@ -1007,7 +1010,6 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
                 <input
                   type="date"
                   value={addDate}
-                  max={new Date().toLocaleDateString("en-CA")}
                   onChange={(e) => setAddDate(e.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
                 />
