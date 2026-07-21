@@ -846,25 +846,22 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
 
   return (
     <div className="space-y-6">
-      {/* Header Panel */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
-        <div>
-          <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-            <span>📋</span> {isAdmin ? (selectedEmployeeProfile ? `Attendance Log: ${selectedEmployeeProfile.name}` : 'Workforce Attendance Explorer & Roster') : 'My Attendance Sheet'}
+      {/* Header Panel / Top Toolbar */}
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
+        {/* Compact Title */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="h-9 w-9 rounded-xl bg-sky-50 flex items-center justify-center text-sky-700 font-bold text-sm">
+            📋
+          </div>
+          <h2 className="text-base font-black text-slate-800 tracking-tight">
+            {isAdmin ? (selectedEmployeeProfile ? `Log: ${selectedEmployeeProfile.name}` : 'Attendance Logs') : 'My Attendance Sheet'}
           </h2>
-          <p className="text-xs text-slate-400 mt-1">
-            {isAdmin
-              ? (selectedEmployeeProfile
-                  ? `Detailed attendance records & total duration for ${selectedEmployeeProfile.name} (PIN: ${selectedEmployeeProfile.pin})`
-                  : 'Complete roster view of all team members: track punch in/out, absentees, WFH, leave, and export Excel sheets')
-              : 'Inspect your personal attendance history, shift durations, and status updates'}
-          </p>
         </div>
 
-        {/* Date Filter & Action Controls */}
-        <div className="flex flex-wrap items-center gap-3">
+        {/* Date Filter & Action Controls Bar */}
+        <div className="flex flex-wrap items-center justify-between lg:justify-end gap-3 flex-1">
           {isAdmin && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <span className="text-[10px] font-extrabold uppercase text-slate-400">Employee:</span>
               <select
                 value={selectedUserFilter}
@@ -875,7 +872,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
                     setDateFilterMode('all');
                   }
                 }}
-                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm max-w-[200px]"
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm max-w-[210px]"
               >
                 <option value="all">👥 All Employees ({nonAdminProfiles.length})</option>
                 {nonAdminProfiles.map(p => (
@@ -987,48 +984,53 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
             </button>
           )}
 
-          {/* Excel Download Button */}
-          <button
-            onClick={downloadExcelSheet}
-            disabled={filteredResources.length === 0}
-            className="flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-emerald-100 cursor-pointer active:scale-95 transition-all disabled:opacity-50"
-            title={selectedEmployeeProfile ? `Export ${selectedEmployeeProfile.name}'s Attendance Report` : "Download complete Excel / CSV Attendance Sheet"}
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            {selectedEmployeeProfile ? `Export ${selectedEmployeeProfile.name.split(' ')[0]}'s Sheet` : 'Export Excel Sheet'}
-          </button>
+          <div className="h-6 w-px bg-slate-200 hidden sm:block mx-1"></div>
 
-          {/* Bulk Import CSV Button for Admin */}
-          {isAdmin && (
+          {/* Action Buttons Group */}
+          <div className="flex items-center gap-2">
+            {/* Excel Download Button */}
             <button
-              onClick={() => setIsBulkModalOpen(true)}
-              className="flex items-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-purple-100 cursor-pointer active:scale-95 transition-all"
-              title="Bulk Import Attendance from CSV/Excel"
+              onClick={downloadExcelSheet}
+              disabled={filteredResources.length === 0}
+              className="flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3.5 py-2 shadow-md shadow-emerald-100 cursor-pointer active:scale-95 transition-all disabled:opacity-50"
+              title={selectedEmployeeProfile ? `Export ${selectedEmployeeProfile.name}'s Attendance Report` : "Download complete Excel / CSV Attendance Sheet"}
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
-              Bulk Import CSV
+              {selectedEmployeeProfile ? `Export ${selectedEmployeeProfile.name.split(' ')[0]}'s Sheet` : 'Export Sheet'}
             </button>
-          )}
 
-          <button
-            onClick={() => {
-              setSelectedItem(null);
-              setAddDate(filterDate || new Date().toLocaleDateString("en-CA"));
-              if (selectedEmployeeProfile) setAddUserId(selectedEmployeeProfile.id);
-              setIsAdding(true);
-              setError(null);
-            }}
-            className="flex items-center gap-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-sky-100 cursor-pointer active:scale-95 transition-all"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Add Attendance
-          </button>
+            {/* Bulk Import CSV Button for Admin */}
+            {isAdmin && (
+              <button
+                onClick={() => setIsBulkModalOpen(true)}
+                className="flex items-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs px-3.5 py-2 shadow-md shadow-purple-100 cursor-pointer active:scale-95 transition-all"
+                title="Bulk Import Attendance from CSV/Excel"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                Bulk Import CSV
+              </button>
+            )}
+
+            <button
+              onClick={() => {
+                setSelectedItem(null);
+                setAddDate(filterDate || new Date().toLocaleDateString("en-CA"));
+                if (selectedEmployeeProfile) setAddUserId(selectedEmployeeProfile.id);
+                setIsAdding(true);
+                setError(null);
+              }}
+              className="flex items-center gap-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs px-3.5 py-2 shadow-md shadow-sky-100 cursor-pointer active:scale-95 transition-all"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Add Attendance
+            </button>
+          </div>
         </div>
       </div>
 
