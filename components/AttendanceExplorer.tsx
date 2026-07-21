@@ -335,20 +335,26 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
 
   // 3. Filtered Resource List
   const filteredResources = useMemo(() => {
-    return masterResourceList.filter(item => {
-      // Month Filter
-      if (filterMonth && !item.date.startsWith(filterMonth)) return false;
-      // Search Term Filter
-      if (searchTerm) {
-        const term = searchTerm.toLowerCase();
-        const matchesName = item.userName.toLowerCase().includes(term);
-        const matchesPin = item.userPin.toLowerCase().includes(term);
-        if (!matchesName && !matchesPin) return false;
-      }
-      // Status Filter
-      if (statusFilter !== 'all' && item.status !== statusFilter) return false;
-      return true;
-    });
+    return masterResourceList
+      .filter(item => {
+        // Month Filter
+        if (filterMonth && !item.date.startsWith(filterMonth)) return false;
+        // Search Term Filter
+        if (searchTerm) {
+          const term = searchTerm.toLowerCase();
+          const matchesName = item.userName.toLowerCase().includes(term);
+          const matchesPin = item.userPin.toLowerCase().includes(term);
+          if (!matchesName && !matchesPin) return false;
+        }
+        // Status Filter
+        if (statusFilter !== 'all' && item.status !== statusFilter) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const pinCompare = (a.userPin || '').localeCompare(b.userPin || '', undefined, { numeric: true, sensitivity: 'base' });
+        if (pinCompare !== 0) return pinCompare;
+        return a.date.localeCompare(b.date);
+      });
   }, [masterResourceList, filterMonth, searchTerm, statusFilter]);
 
   // 4. Summary KPI Metrics for Selected View
@@ -974,11 +980,13 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all"
                   >
                     <option value="">Choose an employee...</option>
-                    {profiles.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} (PIN: {p.pin})
-                      </option>
-                    ))}
+                    {[...profiles]
+                      .sort((a, b) => (a.pin || '').localeCompare(b.pin || '', undefined, { numeric: true, sensitivity: 'base' }))
+                      .map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} (PIN: {p.pin})
+                        </option>
+                      ))}
                   </select>
                 </div>
               )}
