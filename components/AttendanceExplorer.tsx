@@ -564,8 +564,28 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
   const downloadExcelSheet = () => {
     if (filteredResources.length === 0) return;
 
-    const reportDate = filterDate || filterMonth || new Date().toLocaleDateString("en-CA");
-    const generatedAt = new Date().toLocaleString();
+    let dateRangeStr = "All Recorded Dates";
+    if (filterDate) {
+      dateRangeStr = filterDate;
+    } else if (filterMonth) {
+      dateRangeStr = `Month ${filterMonth}`;
+    } else if (filteredResources.length > 0) {
+      const dates = filteredResources.map(r => r.date).filter(Boolean).sort();
+      if (dates.length > 0) {
+        const minDate = dates[0];
+        const maxDate = dates[dates.length - 1];
+        dateRangeStr = minDate === maxDate ? minDate : `${minDate} to ${maxDate}`;
+      }
+    }
+
+    const generatedAt = new Date().toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    });
 
     // Priority Status Order: Present -> WFH -> Leave -> Absent -> Alphabetical by name
     const statusPriority: Record<string, number> = {
@@ -587,7 +607,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
     // Summary Section
     const summaryRows = [
       ['Attendance Sheet for BRAC IT Augmented Resources at BRAC'],
-      [`REPORT DATE: ${reportDate}`],
+      [`FILTER DATE RANGE: ${dateRangeStr}`],
       [`GENERATED AT: ${generatedAt}`],
       [''],
       ['KPI SUMMARY'],
@@ -636,11 +656,12 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
     ].join('\n');
 
     // Add BOM marker (\uFEFF) so Microsoft Excel opens it seamlessly without extension mismatch warnings
+    const fileNameRange = dateRangeStr.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
     const blob = new Blob(['\uFEFF' + csvLines], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `BRAC_Attendance_Report_${reportDate}.csv`);
+    link.setAttribute("download", `BRAC_Attendance_Report_${fileNameRange}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

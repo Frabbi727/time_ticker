@@ -183,40 +183,107 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
       alert("No data available to export with the current filters.");
       return;
     }
-    
+
+    // Determine Filter Date Range Text
+    let dateRangeStr = "All Recorded Dates";
+    if (filterStartDate && filterEndDate) {
+      dateRangeStr = filterStartDate === filterEndDate ? filterStartDate : `${filterStartDate} to ${filterEndDate}`;
+    } else if (filterStartDate) {
+      dateRangeStr = `From ${filterStartDate}`;
+    } else if (filterEndDate) {
+      dateRangeStr = `Until ${filterEndDate}`;
+    } else if (filteredLogs.length > 0) {
+      const dates = filteredLogs.map(l => l.date).sort();
+      const minDate = dates[0];
+      const maxDate = dates[dates.length - 1];
+      dateRangeStr = minDate === maxDate ? minDate : `${minDate} to ${maxDate}`;
+    }
+
+    const generatedAt = new Date().toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    });
+
+    const formatTimeDisplay = (timeStr?: string | null) => {
+      if (!timeStr) return '--:--';
+      const parts = timeStr.split(':');
+      if (parts.length < 2) return timeStr;
+      const h = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10);
+      if (isNaN(h) || isNaN(m)) return timeStr;
+      const d = new Date();
+      d.setHours(h, m, 0, 0);
+      return d.toLocaleTimeString("en-US", { hour: '2-digit', minute: '2-digit', hour12: true });
+    };
+
+    const getDayName = (dateStr: string) => {
+      if (!dateStr) return '';
+      const d = new Date(dateStr + 'T00:00:00');
+      return d.toLocaleDateString("en-US", { weekday: 'short' });
+    };
+
+    const summaryRows = [
+      ['BRAC Time Tracker - Work Logs Report'],
+      [`FILTER DATE RANGE: ${dateRangeStr}`],
+      [`GENERATED AT: ${generatedAt}`],
+      [`TOTAL LOGS: ${filteredLogs.length}`],
+      [`TOTAL LOGGED DURATION: ${totalHours}`],
+      ['']
+    ];
+
     const headers = isAdmin
-      ? ['User Name', 'PIN', 'Date', 'Project', 'Category', 'Description', 'Duration', 'Remarks']
-      : ['Date', 'Project', 'Category', 'Description', 'Duration', 'Remarks'];
+      ? ['User Name', 'PIN', 'Date', 'Day of Week', 'Project', 'Category', 'Description', 'Start Time', 'End Time', 'Duration', 'Remarks']
+      : ['Date', 'Day of Week', 'Project', 'Category', 'Description', 'Start Time', 'End Time', 'Duration', 'Remarks'];
 
     const rows = filteredLogs.map(log => {
+      const dayName = getDayName(log.date);
+      const startTimeFmt = log.start_time ? formatTimeDisplay(log.start_time) : 'N/A';
+      const endTimeFmt = log.end_time ? formatTimeDisplay(log.end_time) : 'N/A';
+      const durationFmt = log.direct_duration || (log.start_time && log.end_time ? `${startTimeFmt} - ${endTimeFmt}` : 'N/A');
+
       const baseFields = [
-        `"${log.date}"`,
-        `"${log.projects?.name || 'Unknown Project'}"`,
-        `"${log.category || 'Development'}"`,
-        `"${log.description.replace(/"/g, '""')}"`,
-        `"${log.direct_duration || `${log.start_time?.slice(0, 5)} - ${log.end_time?.slice(0, 5)}`}"`,
-        `"${(log.remarks || '').replace(/"/g, '""')}"`
+        log.date,
+        dayName,
+        log.projects?.name || 'Unknown Project',
+        log.category || 'Development',
+        log.description,
+        startTimeFmt,
+        endTimeFmt,
+        durationFmt,
+        log.remarks || ''
       ];
-      
+
       if (isAdmin) {
         return [
-          `"${log.userName || 'Unknown User'}"`,
-          `"${log.userPin || 'N/A'}"`,
+          log.userName || 'Unknown User',
+          log.userPin || 'N/A',
           ...baseFields
         ];
       }
       return baseFields;
     });
 
-    const csvContent = "\uFEFF" + [headers, ...rows].map(e => e.join(',')).join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
+    const csvLines = [
+      ...summaryRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')),
+      headers.map(v => `"${v.replace(/"/g, '""')}"`).join(','),
+      ...rows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+
+    const fileNameRange = dateRangeStr.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
+    const fileName = `BRAC_TimeLogs_${fileNameRange}.csv`;
+
+    const blob = new Blob(['\uFEFF' + csvLines], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    
+    const link = document.createElement('a');
+
     link.setAttribute('href', url);
-    link.setAttribute('download', `timelog-export-${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', fileName);
     link.style.visibility = 'hidden';
-    
+
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
