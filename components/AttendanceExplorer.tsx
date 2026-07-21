@@ -490,7 +490,15 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
           if (!matchesName && !matchesPin) return false;
         }
         // Status Filter
-        if (statusFilter !== 'all' && item.status !== statusFilter) return false;
+        if (statusFilter === 'WFH') {
+          if (item.status !== 'WFH' && item.status !== 'Pending WFH') return false;
+        } else if (statusFilter === 'Leave') {
+          if (item.status !== 'Leave' && item.status !== 'Pending Leave') return false;
+        } else if (statusFilter === 'Pending') {
+          if (item.status !== 'Pending WFH' && item.status !== 'Pending Leave') return false;
+        } else if (statusFilter !== 'all' && item.status !== statusFilter) {
+          return false;
+        }
         return true;
       })
       .sort((a, b) => {
@@ -939,22 +947,27 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
           )}
 
           {dateFilterMode === 'range' && (
-            <div className="flex items-center gap-1.5">
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm w-32"
-                placeholder="From"
-              />
-              <span className="text-xs text-slate-400 font-extrabold">to</span>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm w-32"
-                placeholder="To"
-              />
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm w-32"
+                  placeholder="From"
+                />
+                <span className="text-xs text-slate-400 font-extrabold">to</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm w-32"
+                  placeholder="To"
+                />
+              </div>
+              {startDate && endDate && startDate > endDate && (
+                <span className="text-[10px] font-bold text-rose-600">⚠️ Start date cannot be after end date</span>
+              )}
             </div>
           )}
 
@@ -1182,18 +1195,18 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
               />
 
               {/* Status Filter Buttons */}
-              <div className="flex flex-wrap bg-slate-100 p-1 rounded-xl gap-0.5">
-                {(['all', 'Present', 'WFH', 'Leave', 'Pending WFH', 'Pending Leave', 'Absent'] as const).map((st) => (
+              <div className="flex bg-slate-100 p-1 rounded-xl gap-0.5">
+                {(['all', 'Present', 'WFH', 'Leave', 'Pending', 'Absent'] as const).map((st) => (
                   <button
                     key={st}
                     onClick={() => setStatusFilter(st)}
-                    className={`px-2 py-1 rounded-lg text-[9px] font-extrabold capitalize transition-all cursor-pointer ${
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold capitalize transition-all cursor-pointer ${
                       statusFilter === st
                         ? "bg-white text-slate-900 shadow-sm"
                         : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    {st === 'Pending WFH' ? '⏳ WFH' : st === 'Pending Leave' ? '⏳ Leave' : st}
+                    {st === 'Pending' ? '⏳ Pending' : st}
                   </button>
                 ))}
               </div>
@@ -1206,9 +1219,28 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
               <p className="text-xs font-semibold text-slate-400">Loading roster sheet...</p>
             </div>
           ) : filteredResources.length === 0 ? (
-            <div className="flex h-64 flex-col items-center justify-center text-center">
-              <p className="text-sm font-bold text-slate-500">No matching resources found</p>
-              <p className="text-xs text-slate-400 mt-1">Adjust your date or status filters to view records.</p>
+            <div className="flex h-64 flex-col items-center justify-center text-center space-y-3">
+              <div className="h-10 w-10 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 font-bold text-base">
+                🔍
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-600">No matching resources found</p>
+                <p className="text-xs text-slate-400 mt-0.5">Adjust your date or status filters to view attendance records.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedUserFilter('all');
+                  setDateFilterMode(isAdmin ? 'today' : 'month');
+                  setStartDate('');
+                  setEndDate('');
+                  setSearchTerm('');
+                  setStatusFilter('all');
+                }}
+                className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer shadow-xs"
+              >
+                Reset All Filters
+              </button>
             </div>
           ) : (
             <div className="overflow-x-auto">
