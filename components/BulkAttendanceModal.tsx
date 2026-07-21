@@ -205,12 +205,12 @@ export default function BulkAttendanceModal({
 
       const headers = rows[0].map(h => h.toLowerCase().trim().replace(/[^a-z0-9_]/g, ''));
       
-      const pinIndex = headers.findIndex(h => h.includes('pin'));
-      const dateIndex = headers.findIndex(h => h.includes('date'));
-      const statusIndex = headers.findIndex(h => h.includes('status'));
-      const inIndex = headers.findIndex(h => h.includes('in') || h.includes('punchin') || h.includes('start'));
-      const outIndex = headers.findIndex(h => h.includes('out') || h.includes('punchout') || h.includes('end'));
-      const notesIndex = headers.findIndex(h => h.includes('note') || h.includes('remark'));
+      const pinIndex = headers.findIndex(h => h === 'pin' || h === 'user_pin' || h.includes('pin'));
+      const dateIndex = headers.findIndex(h => h === 'date' || h.includes('date'));
+      const statusIndex = headers.findIndex(h => h === 'status' || h.includes('status'));
+      const inIndex = headers.findIndex(h => h === 'punch_in' || h === 'punchin' || h === 'in_time' || h === 'intime' || h === 'in' || (h.includes('in') && !h.includes('pin')));
+      const outIndex = headers.findIndex(h => h === 'punch_out' || h === 'punchout' || h === 'out_time' || h === 'outtime' || h === 'out' || (h.includes('out') && !h.includes('about')));
+      const notesIndex = headers.findIndex(h => h === 'notes' || h === 'note' || h.includes('note') || h.includes('remark'));
 
       if (pinIndex === -1 || dateIndex === -1) {
         throw new Error('CSV headers must include at least "pin" and "date" columns.');
