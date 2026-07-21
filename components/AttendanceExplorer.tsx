@@ -325,6 +325,13 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
     setEditLoading(true);
     setError(null);
     try {
+      if (!isAdmin) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user && user.id !== selectedItem.userId) {
+          throw new Error("You can only edit your own attendance records.");
+        }
+      }
+
       let punchInIso = editPunchIn ? combineDateAndTime(editDate, editPunchIn) : null;
       let punchOutIso = editPunchOut ? combineDateAndTime(editDate, editPunchOut) : null;
 
@@ -589,21 +596,19 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
             Export Excel Sheet
           </button>
 
-          {isAdmin && (
-            <button
-              onClick={() => {
-                setSelectedItem(null);
-                setIsAdding(true);
-                setError(null);
-              }}
-              className="flex items-center gap-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-sky-100 cursor-pointer active:scale-95 transition-all"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              Add Attendance
-            </button>
-          )}
+          <button
+            onClick={() => {
+              setSelectedItem(null);
+              setIsAdding(true);
+              setError(null);
+            }}
+            className="flex items-center gap-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-sky-100 cursor-pointer active:scale-95 transition-all"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Add Attendance
+          </button>
         </div>
       </div>
 
@@ -1027,17 +1032,15 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
                     </div>
                   </div>
 
-                  {isAdmin && (
-                    <button
-                      onClick={() => setIsEditing(true)}
-                      className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all shadow-sm cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
-                    >
-                      <svg className="h-3.5 w-3.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                      Change Status / Edit
-                    </button>
-                  )}
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all shadow-sm cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
+                  >
+                    <svg className="h-3.5 w-3.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    Change Status / Edit
+                  </button>
                 </div>
               )}
             </div>
