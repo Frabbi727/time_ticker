@@ -169,11 +169,18 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
     return `${hours}:${minutes}`;
   };
 
-  const combineDateAndTime = (dateStr: string, timeStr: string): string => {
-    const [hours, minutes] = timeStr.split(':');
+  const combineDateAndTime = (dateStr: string, timeStr: string): string | null => {
+    if (!dateStr || !timeStr) return null;
+    const parts = timeStr.split(':');
+    if (parts.length < 2) return null;
+    const hours = parseInt(parts[0], 10);
+    const minutes = parseInt(parts[1], 10);
+    if (isNaN(hours) || isNaN(minutes)) return null;
+
     const d = new Date(dateStr + 'T00:00:00');
-    d.setHours(parseInt(hours, 10));
-    d.setMinutes(parseInt(minutes, 10));
+    if (isNaN(d.getTime())) return null;
+
+    d.setHours(hours, minutes, 0, 0);
     return d.toISOString();
   };
 
@@ -325,11 +332,12 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
     setEditLoading(true);
     setError(null);
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("User session not found.");
+
+      let targetUserId = selectedItem.userId;
       if (!isAdmin) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user && user.id !== selectedItem.userId) {
-          throw new Error("You can only edit your own attendance records.");
-        }
+        targetUserId = user.id;
       }
 
       let punchInIso = editPunchIn ? combineDateAndTime(editDate, editPunchIn) : null;
@@ -362,7 +370,7 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
       } else {
         // Insert or Upsert Attendance Record
         const recordData: any = {
-          user_id: selectedItem.userId,
+          user_id: targetUserId,
           date: editDate,
           punch_in: punchInIso,
           punch_out: editStatus === 'In Progress' ? null : punchOutIso,
@@ -387,9 +395,10 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
       setIsEditing(false);
       setSelectedItem(null);
       await fetchData();
-    } catch (err: unknown) {
+    } catch (err: any) {
       console.error('Error saving attendance status:', err);
-      setError(err instanceof Error ? err.message : 'Failed to update attendance status.');
+      const msg = err?.message || err?.details || (typeof err === 'string' ? err : 'Failed to update attendance status.');
+      setError(msg);
     } finally {
       setEditLoading(false);
     }
@@ -432,9 +441,10 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
 
       setIsAdding(false);
       await fetchData();
-    } catch (err: unknown) {
+    } catch (err: any) {
       console.error('Error adding attendance:', err);
-      setError(err instanceof Error ? err.message : 'Failed to add attendance record.');
+      const msg = err?.message || err?.details || (typeof err === 'string' ? err : 'Failed to add attendance record.');
+      setError(msg);
     } finally {
       setAddLoading(false);
     }
