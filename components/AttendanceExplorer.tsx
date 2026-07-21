@@ -62,7 +62,12 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
     setTimeout(() => setCopiedSql(false), 3000);
   };
 
-  // Filtering state
+  // Filtering & Single Employee Tracking State
+  const [selectedUserFilter, setSelectedUserFilter] = useState<string>('all');
+  const [dateFilterMode, setDateFilterMode] = useState<'today' | 'month' | 'range' | 'all'>(isAdmin ? 'today' : 'month');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+
   const [filterDate, setFilterDate] = useState<string>(() => {
     if (isAdmin) {
       return new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
@@ -83,6 +88,19 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+
+  // Non-admin employee profiles for single employee selector
+  const nonAdminProfiles = useMemo(() => {
+    return profiles
+      .filter(p => p.role !== 'admin')
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [profiles]);
+
+  // Profile of currently selected single employee
+  const selectedEmployeeProfile = useMemo(() => {
+    if (selectedUserFilter === 'all') return null;
+    return profiles.find(p => p.id === selectedUserFilter) || null;
+  }, [profiles, selectedUserFilter]);
 
   // Status Edit State
   const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -223,16 +241,80 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
     }
   };
 
-  // 2. Computed Resource Attendance Master Sheet (Includes all profiles when viewing by date)
+  // 2. Computed Resource Attendance Master Sheet
   const masterResourceList = useMemo<ResourceAttendanceItem[]>(() => {
     const profilesMap = new Map(profiles.map(p => [p.id, p]));
-    const targetDate = filterDate || (isAdmin ? new Date().toLocaleDateString("en-CA") : '');
-
-    // Filter out System Admin users (only include employees)
     const employeeProfiles = profiles.filter(p => p.role !== 'admin');
+    const todayStr = new Date().toLocaleDateString("en-CA");
 
-    // If Admin viewing a specific date (or today's default view)
-    if (isAdmin && targetDate) {
+    // --- CASE A: SINGLE EMPLOYEE TRACKING MODE ---
+    if (selectedUserFilter !== 'all') {
+      const p = profiles.find(pr => pr.id === selectedUserFilter);
+      if (!p) return [];
+
+      let userLogs = logs.filter(l => l.user_id === p.id);
+
+      // Date Filtering based on dateFilterMode
+      if (dateFilterMode === 'today') {
+        const targetDate = filterDate || todayStr;
+        userLogs = userLogs.filter(l => l.date === targetDate);
+        if (userLogs.length === 0) {
+          return [{
+            id: undefined,
+            userId: p.id,
+            userName: p.name,
+            userPin: p.pin,
+            userRole: p.role || 'employee',
+            date: targetDate,
+            punchIn: null,
+            punchOut: null,
+            status: 'Absent',
+            notes: 'Not Attended Yet',
+            shiftDuration: 'N/A',
+            recordId: null
+          }];
+        }
+      } else if (dateFilterMode === 'month' && filterMonth) {
+        userLogs = userLogs.filter(l => l.date.startsWith(filterMonth));
+      } else if (dateFilterMode === 'range') {
+        if (startDate) userLogs = userLogs.filter(l => l.date >= startDate);
+        if (endDate) userLogs = userLogs.filter(l => l.date <= endDate);
+      }
+
+      return userLogs.map(log => {
+        let status: 'Present' | 'WFH' | 'Leave' | 'Absent' = 'Present';
+        let shiftDuration = 'N/A';
+        let notes = log.notes || '';
+
+        if (log.status === 'WFH') {
+          status = 'WFH';
+        } else if (log.status === 'Leave') {
+          status = 'Leave';
+        } else if (log.punch_in || log.punch_out) {
+          status = 'Present';
+          shiftDuration = log.punch_out ? getShiftDuration(log.punch_in, log.punch_out) : 'In Progress';
+        }
+
+        return {
+          id: log.id,
+          userId: log.user_id,
+          userName: p.name,
+          userPin: p.pin,
+          userRole: p.role || 'employee',
+          date: log.date,
+          punchIn: log.punch_in,
+          punchOut: log.punch_out,
+          status,
+          notes,
+          shiftDuration,
+          recordId: log.id || null
+        };
+      }).sort((a, b) => b.date.localeCompare(a.date));
+    }
+
+    // --- CASE B: ALL EMPLOYEES BY SINGLE DATE ---
+    if (isAdmin && dateFilterMode === 'today') {
+      const targetDate = filterDate || todayStr;
       const logsForDate = logs.filter(l => l.date === targetDate);
       const userLogsGroup = new Map<string, AttendanceRecord[]>();
       logsForDate.forEach(l => {
@@ -304,8 +386,16 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
       });
     }
 
-    // Otherwise (Historical or employee personal logs)
-    return logs.map(log => {
+    // --- CASE C: ALL EMPLOYEES HISTORICAL LOGS ---
+    let filteredLogs = logs;
+    if (dateFilterMode === 'month' && filterMonth) {
+      filteredLogs = logs.filter(l => l.date.startsWith(filterMonth));
+    } else if (dateFilterMode === 'range') {
+      if (startDate) filteredLogs = filteredLogs.filter(l => l.date >= startDate);
+      if (endDate) filteredLogs = filteredLogs.filter(l => l.date <= endDate);
+    }
+
+    return filteredLogs.map(log => {
       const p = profilesMap.get(log.user_id);
       let status: 'Present' | 'WFH' | 'Leave' | 'Absent' = 'Present';
       let shiftDuration = 'N/A';
@@ -335,14 +425,12 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
         recordId: log.id || null
       };
     });
-  }, [logs, profiles, filterDate, isAdmin]);
+  }, [logs, profiles, filterDate, filterMonth, startDate, endDate, dateFilterMode, selectedUserFilter, isAdmin]);
 
   // 3. Filtered Resource List
   const filteredResources = useMemo(() => {
     return masterResourceList
       .filter(item => {
-        // Month Filter
-        if (filterMonth && !item.date.startsWith(filterMonth)) return false;
         // Search Term Filter
         if (searchTerm) {
           const term = searchTerm.toLowerCase();
@@ -355,11 +443,14 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
         return true;
       })
       .sort((a, b) => {
+        if (selectedUserFilter !== 'all') {
+          return b.date.localeCompare(a.date);
+        }
         const pinCompare = (a.userPin || '').localeCompare(b.userPin || '', undefined, { numeric: true, sensitivity: 'base' });
         if (pinCompare !== 0) return pinCompare;
-        return a.date.localeCompare(b.date);
+        return b.date.localeCompare(a.date);
       });
-  }, [masterResourceList, filterMonth, searchTerm, statusFilter]);
+  }, [masterResourceList, searchTerm, statusFilter, selectedUserFilter]);
 
   // 4. Summary KPI Metrics for Selected View
   const kpiMetrics = useMemo(() => {
@@ -370,7 +461,19 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
     const absent = masterResourceList.filter(r => r.status === 'Absent').length;
     const attendanceRate = total > 0 ? Math.round(((present + wfh) / total) * 100) : 0;
 
-    return { total, present, wfh, leave, absent, attendanceRate };
+    let totalWorkedMinutes = 0;
+    masterResourceList.forEach(r => {
+      if (r.punchIn && r.punchOut) {
+        const diff = new Date(r.punchOut).getTime() - new Date(r.punchIn).getTime();
+        if (diff > 0) totalWorkedMinutes += Math.floor(diff / 60000);
+      }
+    });
+
+    const totalHours = Math.floor(totalWorkedMinutes / 60);
+    const totalMins = totalWorkedMinutes % 60;
+    const totalWorkedDuration = `${totalHours}h ${totalMins}m`;
+
+    return { total, present, wfh, leave, absent, attendanceRate, totalWorkedDuration };
   }, [masterResourceList]);
 
   // 5. Initialize edit state when selected item changes
@@ -569,21 +672,21 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
     }
   };
 
-  // 8. Enhanced Native CSV Export with Present-First Priority Sorting & UTF-8 BOM
+  // 8. Enhanced Native CSV Export supporting Single Employee & Multi-Employee Roster
   const downloadExcelSheet = () => {
     if (filteredResources.length === 0) return;
 
     let dateRangeStr = "All Recorded Dates";
-    if (filterDate) {
+    if (dateFilterMode === 'today' && filterDate) {
       dateRangeStr = filterDate;
-    } else if (filterMonth) {
-      dateRangeStr = `Month ${filterMonth}`;
+    } else if (dateFilterMode === 'month' && filterMonth) {
+      dateRangeStr = `Month_${filterMonth}`;
+    } else if (dateFilterMode === 'range' && (startDate || endDate)) {
+      dateRangeStr = `${startDate || 'Start'}_to_${endDate || 'End'}`;
     } else if (filteredResources.length > 0) {
       const dates = filteredResources.map(r => r.date).filter(Boolean).sort();
       if (dates.length > 0) {
-        const minDate = dates[0];
-        const maxDate = dates[dates.length - 1];
-        dateRangeStr = minDate === maxDate ? minDate : `${minDate} to ${maxDate}`;
+        dateRangeStr = dates[0] === dates[dates.length - 1] ? dates[0] : `${dates[0]}_to_${dates[dates.length - 1]}`;
       }
     }
 
@@ -596,34 +699,51 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
       hour12: true
     });
 
-    // Sort by PIN ascending (small to big numerically: 101, 102, 103...), then by Date
-    const sortedResources = [...filteredResources]
-      .filter(item => item.userRole !== 'admin')
-      .sort((a, b) => {
-        const pinCompare = (a.userPin || '').localeCompare(b.userPin || '', undefined, { numeric: true, sensitivity: 'base' });
-        if (pinCompare !== 0) return pinCompare;
-        return a.date.localeCompare(b.date);
-      });
+    let summaryRows: (string | number)[][] = [];
+    let fileName = `BRAC_Attendance_Report_${dateRangeStr}.csv`;
 
-    // Summary Section
-    const summaryRows = [
-      ['Attendance Sheet for BRAC IT Augmented Resources at BRAC'],
-      [`FILTER DATE RANGE: ${dateRangeStr}`],
-      [`GENERATED AT: ${generatedAt}`],
-      [''],
-      ['KPI SUMMARY'],
-      ['Total Team Size', 'Present', 'Work From Home (WFH)', 'On Leave', 'Absent (Not Attended)', 'Attendance Rate'],
-      [
-        kpiMetrics.total,
-        kpiMetrics.present,
-        kpiMetrics.wfh,
-        kpiMetrics.leave,
-        kpiMetrics.absent,
-        `${kpiMetrics.attendanceRate}%`
-      ],
-      [''],
-      ['DETAILED EMPLOYEE ATTENDANCE ROSTER SHEET (SORTED BY PIN ASCENDING)']
-    ];
+    if (selectedEmployeeProfile) {
+      fileName = `BRAC_Attendance_${selectedEmployeeProfile.name.replace(/\s+/g, '_')}_PIN_${selectedEmployeeProfile.pin}_${dateRangeStr}.csv`;
+      summaryRows = [
+        [`SINGLE EMPLOYEE ATTENDANCE REPORT: ${selectedEmployeeProfile.name} (PIN: ${selectedEmployeeProfile.pin})`],
+        [`ROLE: ${getRoleBadgeLabel(selectedEmployeeProfile.role)}`],
+        [`FILTER DATE RANGE: ${dateRangeStr.replace(/_/g, ' ')}`],
+        [`GENERATED AT: ${generatedAt}`],
+        [''],
+        ['EMPLOYEE ATTENDANCE KPI SUMMARY'],
+        ['Total Tracked Days', 'Present', 'Work From Home (WFH)', 'On Leave', 'Absent', 'Total Worked Hours', 'Attendance Rate'],
+        [
+          kpiMetrics.total,
+          kpiMetrics.present,
+          kpiMetrics.wfh,
+          kpiMetrics.leave,
+          kpiMetrics.absent,
+          kpiMetrics.totalWorkedDuration,
+          `${kpiMetrics.attendanceRate}%`
+        ],
+        [''],
+        ['DETAILED DAILY ATTENDANCE BREAKDOWN SHEET']
+      ];
+    } else {
+      summaryRows = [
+        ['Attendance Sheet for BRAC IT Augmented Resources at BRAC'],
+        [`FILTER DATE RANGE: ${dateRangeStr.replace(/_/g, ' ')}`],
+        [`GENERATED AT: ${generatedAt}`],
+        [''],
+        ['KPI SUMMARY'],
+        ['Total Team Size / Days', 'Present', 'Work From Home (WFH)', 'On Leave', 'Absent (Not Attended)', 'Attendance Rate'],
+        [
+          kpiMetrics.total,
+          kpiMetrics.present,
+          kpiMetrics.wfh,
+          kpiMetrics.leave,
+          kpiMetrics.absent,
+          `${kpiMetrics.attendanceRate}%`
+        ],
+        [''],
+        ['DETAILED EMPLOYEE ATTENDANCE ROSTER SHEET']
+      ];
+    }
 
     const tableHeaders = [
       'Employee Name',
@@ -637,7 +757,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
       'Notes / Remarks'
     ];
 
-    const dataRows = sortedResources.map(item => [
+    const dataRows = filteredResources.map(item => [
       item.userName,
       item.userPin,
       item.date,
@@ -649,20 +769,17 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
       item.notes || 'N/A'
     ]);
 
-    // Combine lines with proper CSV quoting and BOM for Excel UTF-8 recognition
     const csvLines = [
       ...summaryRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')),
       tableHeaders.map(v => `"${v.replace(/"/g, '""')}"`).join(','),
       ...dataRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
-    // Add BOM marker (\uFEFF) so Microsoft Excel opens it seamlessly without extension mismatch warnings
-    const fileNameRange = dateRangeStr.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
     const blob = new Blob(['\uFEFF' + csvLines], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `BRAC_Attendance_Report_${fileNameRange}.csv`);
+    link.setAttribute("download", fileName);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -674,56 +791,135 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
         <div>
           <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-            <span>📋</span> {isAdmin ? 'Workforce Attendance Explorer & Roster' : 'My Attendance Sheet'}
+            <span>📋</span> {isAdmin ? (selectedEmployeeProfile ? `Attendance Log: ${selectedEmployeeProfile.name}` : 'Workforce Attendance Explorer & Roster') : 'My Attendance Sheet'}
           </h2>
           <p className="text-xs text-slate-400 mt-1">
             {isAdmin
-              ? 'Complete roster view of all team members: track punch in/out, absentees, WFH, leave, and export Excel sheets'
+              ? (selectedEmployeeProfile
+                  ? `Detailed attendance records & total duration for ${selectedEmployeeProfile.name} (PIN: ${selectedEmployeeProfile.pin})`
+                  : 'Complete roster view of all team members: track punch in/out, absentees, WFH, leave, and export Excel sheets')
               : 'Inspect your personal attendance history, shift durations, and status updates'}
           </p>
         </div>
 
         {/* Date Filter & Action Controls */}
         <div className="flex flex-wrap items-center gap-3">
-          {isAdmin ? (
+          {isAdmin && (
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-extrabold uppercase text-slate-400">Date:</span>
+              <span className="text-[10px] font-extrabold uppercase text-slate-400">Employee:</span>
+              <select
+                value={selectedUserFilter}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSelectedUserFilter(val);
+                  if (val !== 'all' && dateFilterMode === 'today') {
+                    setDateFilterMode('all');
+                  }
+                }}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm max-w-[200px]"
+              >
+                <option value="all">👥 All Employees ({nonAdminProfiles.length})</option>
+                {nonAdminProfiles.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} (PIN: {p.pin})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Date Mode Toggle */}
+          <div className="flex bg-slate-100 p-1 rounded-xl items-center">
+            <button
+              onClick={() => setDateFilterMode('today')}
+              className={`px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer ${
+                dateFilterMode === 'today' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Date
+            </button>
+            <button
+              onClick={() => setDateFilterMode('month')}
+              className={`px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer ${
+                dateFilterMode === 'month' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Month
+            </button>
+            <button
+              onClick={() => setDateFilterMode('range')}
+              className={`px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer ${
+                dateFilterMode === 'range' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Range
+            </button>
+            <button
+              onClick={() => setDateFilterMode('all')}
+              className={`px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer ${
+                dateFilterMode === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              All Time
+            </button>
+          </div>
+
+          {/* Date inputs based on dateFilterMode */}
+          {dateFilterMode === 'today' && (
+            <input
+              type="date"
+              value={filterDate}
+              onChange={(e) => {
+                const newDate = e.target.value;
+                setFilterDate(newDate);
+                if (newDate) setAddDate(newDate);
+              }}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm"
+            />
+          )}
+
+          {dateFilterMode === 'month' && (
+            <input
+              type="month"
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(e.target.value)}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm"
+            />
+          )}
+
+          {dateFilterMode === 'range' && (
+            <div className="flex items-center gap-1.5">
               <input
                 type="date"
-                value={filterDate}
-                onChange={(e) => {
-                  const newDate = e.target.value;
-                  setFilterDate(newDate);
-                  setFilterMonth('');
-                  if (newDate) setAddDate(newDate);
-                }}
-                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm w-32"
+                placeholder="From"
               />
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-extrabold uppercase text-slate-400">Month:</span>
+              <span className="text-xs text-slate-400 font-extrabold">to</span>
               <input
-                type="month"
-                value={filterMonth}
-                onChange={(e) => {
-                  setFilterMonth(e.target.value);
-                  setFilterDate('');
-                }}
-                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm"
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-bold text-slate-700 outline-none focus:border-sky-500 focus:bg-white transition-all shadow-sm w-32"
+                placeholder="To"
               />
             </div>
           )}
 
-          {(filterDate || filterMonth) && (
+          {(filterDate || filterMonth || startDate || endDate || selectedUserFilter !== 'all' || dateFilterMode !== (isAdmin ? 'today' : 'month')) && (
             <button
               onClick={() => {
-                setFilterDate('');
+                setFilterDate(isAdmin ? new Date().toLocaleDateString("en-CA") : '');
                 setFilterMonth('');
+                setStartDate('');
+                setEndDate('');
+                setSelectedUserFilter('all');
+                setDateFilterMode(isAdmin ? 'today' : 'month');
               }}
-              className="text-xs font-bold text-slate-400 hover:text-slate-700 cursor-pointer"
+              className="text-xs font-bold text-slate-400 hover:text-slate-700 cursor-pointer underline"
             >
-              Clear Filter
+              Reset Filters
             </button>
           )}
 
@@ -732,12 +928,12 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
             onClick={downloadExcelSheet}
             disabled={filteredResources.length === 0}
             className="flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 shadow-md shadow-emerald-100 cursor-pointer active:scale-95 transition-all disabled:opacity-50"
-            title="Download complete Excel / CSV Attendance Sheet"
+            title={selectedEmployeeProfile ? `Export ${selectedEmployeeProfile.name}'s Attendance Report` : "Download complete Excel / CSV Attendance Sheet"}
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            Export Excel Sheet
+            {selectedEmployeeProfile ? `Export ${selectedEmployeeProfile.name.split(' ')[0]}'s Sheet` : 'Export Excel Sheet'}
           </button>
 
           {/* Bulk Import CSV Button for Admin */}
@@ -758,6 +954,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
             onClick={() => {
               setSelectedItem(null);
               setAddDate(filterDate || new Date().toLocaleDateString("en-CA"));
+              if (selectedEmployeeProfile) setAddUserId(selectedEmployeeProfile.id);
               setIsAdding(true);
               setError(null);
             }}
@@ -771,14 +968,52 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
         </div>
       </div>
 
-      {/* Admin Summary KPI Counters */}
+      {/* Single Employee Profile Banner (Rendered when a specific employee is selected) */}
+      {selectedEmployeeProfile && (
+        <div className="rounded-3xl border border-sky-100 bg-gradient-to-r from-sky-50/90 via-white to-indigo-50/60 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="h-14 w-14 rounded-2xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center font-black text-white text-xl shadow-md shadow-sky-500/20 shrink-0">
+              {selectedEmployeeProfile.name.slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-lg font-black text-slate-900">{selectedEmployeeProfile.name}</h3>
+                <span className="rounded-lg bg-sky-100 px-2 py-0.5 text-xs font-extrabold text-sky-700 uppercase tracking-wider">
+                  PIN: {selectedEmployeeProfile.pin}
+                </span>
+                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600 uppercase">
+                  {getRoleBadgeLabel(selectedEmployeeProfile.role)}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1 font-medium flex items-center gap-2">
+                <span>Total Worked: <strong className="text-slate-800">{kpiMetrics.totalWorkedDuration}</strong></span>
+                <span>•</span>
+                <span>Attendance Rate: <strong className="text-emerald-700">{kpiMetrics.attendanceRate}%</strong></span>
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setSelectedUserFilter('all')}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-all cursor-pointer shadow-sm self-start md:self-auto"
+          >
+            ✕ Clear & View All Employees
+          </button>
+        </div>
+      )}
+
+      {/* Summary KPI Counters */}
       {isAdmin && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-          {/* KPI 1: Total Team */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+          {/* KPI 1: Total Days / Team */}
           <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm text-center">
-            <span className="block text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Total Team</span>
+            <span className="block text-[9px] font-extrabold uppercase tracking-wider text-slate-400">
+              {selectedEmployeeProfile ? 'Tracked Days' : 'Total Team'}
+            </span>
             <span className="mt-1 block text-2xl font-black text-slate-800">{kpiMetrics.total}</span>
-            <span className="text-[9px] font-semibold text-slate-400">Registered Members</span>
+            <span className="text-[9px] font-semibold text-slate-400">
+              {selectedEmployeeProfile ? 'Logs Count' : 'Registered Members'}
+            </span>
           </div>
 
           {/* KPI 2: Present */}
@@ -806,7 +1041,14 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
           <div className="rounded-2xl border border-rose-100 bg-rose-50/40 p-4 shadow-sm text-center">
             <span className="block text-[9px] font-extrabold uppercase tracking-wider text-rose-700">Absent</span>
             <span className="mt-1 block text-2xl font-black text-rose-700">{kpiMetrics.absent}</span>
-            <span className="text-[9px] font-semibold text-rose-600">Not Attended Yet</span>
+            <span className="text-[9px] font-semibold text-rose-600">Not Attended</span>
+          </div>
+
+          {/* KPI 6: Total Worked Duration */}
+          <div className="rounded-2xl border border-sky-100 bg-sky-50/40 p-4 shadow-sm text-center col-span-2 sm:col-span-1">
+            <span className="block text-[9px] font-extrabold uppercase tracking-wider text-sky-700">Worked Hours</span>
+            <span className="mt-1 block text-xl font-black text-sky-700">{kpiMetrics.totalWorkedDuration}</span>
+            <span className="text-[9px] font-semibold text-sky-600">Total Shift Duration</span>
           </div>
         </div>
       )}
@@ -866,10 +1108,15 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-50 pb-4">
             <div>
               <h3 className="text-sm font-bold text-slate-900">
-                {isAdmin ? 'Resource Attendance Sheet' : 'My Logs'} ({filteredResources.length})
+                {isAdmin
+                  ? (selectedEmployeeProfile ? `Logs for ${selectedEmployeeProfile.name}` : 'Resource Attendance Sheet')
+                  : 'My Logs'} ({filteredResources.length})
               </h3>
               <p className="text-[10px] text-slate-400 font-semibold">
-                {filterDate ? `Showing attendance for ${formatDate(filterDate)}` : 'Filtered list'}
+                {dateFilterMode === 'today' && filterDate && `Showing date: ${formatDate(filterDate)}`}
+                {dateFilterMode === 'month' && filterMonth && `Showing month: ${filterMonth}`}
+                {dateFilterMode === 'range' && (startDate || endDate) && `Date range: ${startDate || 'Earliest'} to ${endDate || 'Latest'}`}
+                {dateFilterMode === 'all' && 'All recorded history'}
               </p>
             </div>
 
@@ -956,11 +1203,25 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
                       >
                         <td className="py-3.5 pr-2">
                           <div className="font-bold text-slate-800 truncate max-w-[140px]">{item.userName}</div>
-                          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-400 mt-0.5">
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-semibold text-slate-400 mt-0.5">
                             <span>PIN: {item.userPin}</span>
                             <span className="rounded bg-slate-100 px-1 text-[8px] font-bold text-slate-600 uppercase">
                               {getRoleBadgeLabel(item.userRole)}
                             </span>
+                            {isAdmin && selectedUserFilter === 'all' && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedUserFilter(item.userId);
+                                  setDateFilterMode('all');
+                                }}
+                                className="text-[9px] font-extrabold text-sky-600 hover:text-sky-800 hover:underline cursor-pointer flex items-center gap-0.5 ml-1"
+                                title="Filter and track this employee's complete attendance"
+                              >
+                                👁 Track
+                              </button>
+                            )}
                           </div>
                         </td>
                         <td className="py-3.5 font-bold text-slate-800">
