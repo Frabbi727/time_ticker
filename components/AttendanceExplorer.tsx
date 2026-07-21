@@ -98,7 +98,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
   const [addStatus, setAddStatus] = useState<string>('Present');
   const [addDate, setAddDate] = useState<string>(() => new Date().toLocaleDateString("en-CA"));
   const [addPunchIn, setAddPunchIn] = useState<string>('09:00');
-  const [addPunchOut, setAddPunchOut] = useState<string>('17:00');
+  const [addPunchOut, setAddPunchOut] = useState<string>('');
   const [addNotes, setAddNotes] = useState<string>('');
   const [addLoading, setAddLoading] = useState<boolean>(false);
 
@@ -398,10 +398,9 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
         throw new Error("Punch Out time must be later than Punch In time.");
       }
 
-      if (editStatus === 'Present' && (!editPunchIn || !editPunchOut)) {
-        // Default shift if present
-        if (!editPunchIn) punchInIso = combineDateAndTime(editDate, '09:00');
-        if (!editPunchOut) punchOutIso = combineDateAndTime(editDate, '17:00');
+      if (editStatus === 'Present' && !editPunchIn) {
+        // Default punch in time to 09:00 if punch in is missing
+        punchInIso = combineDateAndTime(editDate, '09:00');
       }
 
       if (editStatus === 'In Progress' && !editPunchIn) {
@@ -1028,7 +1027,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
 
                   {addStatus === 'Present' && (
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch Out Time</label>
+                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch Out Time (Optional)</label>
                       <input
                         type="time"
                         value={addPunchOut}
@@ -1116,7 +1115,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
 
                       {editStatus === 'Present' && (
                         <div className="space-y-1.5">
-                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch Out Time</label>
+                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Punch Out Time (Optional)</label>
                           <input
                             type="time"
                             value={editPunchOut}
