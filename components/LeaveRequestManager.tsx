@@ -212,6 +212,17 @@ CREATE POLICY "Users can manage their own leave requests"
         applicantId = user.id;
       }
 
+      // Corner Case Validation: Check for overlapping active or pending requests for this user
+      const existingOverlap = requests.find(r => {
+        if (r.user_id !== applicantId) return false;
+        if (r.status === 'Rejected') return false;
+        return r.start_date <= endDate && r.end_date >= startDate;
+      });
+
+      if (existingOverlap) {
+        throw new Error(`An active or pending ${existingOverlap.request_type.toUpperCase()} application already exists for this date range (${existingOverlap.start_date} to ${existingOverlap.end_date}).`);
+      }
+
       const newRecord = {
         user_id: applicantId,
         request_type: requestType,

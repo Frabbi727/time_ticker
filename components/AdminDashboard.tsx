@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { supabase } from '@/lib/supabase';
 
 interface Project {
   id: string;
@@ -38,16 +39,37 @@ interface AdminDashboardProps {
   teamUsers: any[];
   todayAttendance: AttendanceRecord[];
   projects: Project[];
+  leaveRequests?: any[];
 }
 
-export default function AdminDashboard({ logs, teamUsers, todayAttendance, projects }: AdminDashboardProps) {
+export default function AdminDashboard({ logs, teamUsers, todayAttendance, projects, leaveRequests }: AdminDashboardProps) {
   const [selectedUserFilter, setSelectedUserFilter] = useState<string>('');
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'working' | 'completed' | 'wfh' | 'leave' | 'offline'>('all');
   const [roleFilter, setRoleFilter] = useState<string>('');
+  const [fetchedLeaveReqs, setFetchedLeaveReqs] = useState<any[]>([]);
 
   const todayStr = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
+
+  useEffect(() => {
+    async function fetchTodayLeaveReqs() {
+      try {
+        const { data } = await supabase
+          .from('leave_wfh_requests')
+          .select('*')
+          .lte('start_date', todayStr)
+          .gte('end_date', todayStr)
+          .in('status', ['Approved', 'Pending']);
+        if (data) setFetchedLeaveReqs(data);
+      } catch (err) {
+        console.warn('Could not fetch today leave/wfh requests:', err);
+      }
+    }
+    fetchTodayLeaveReqs();
+  }, [todayStr]);
+
+  const activeLeaveReqs = leaveRequests || fetchedLeaveReqs;
   const activeUsersCount = new Set(todayAttendance.filter(a => !a.punch_out).map(a => a.user_id)).size;
   const completedShiftsCount = todayAttendance.filter(a => a.punch_out).length;
 
@@ -217,7 +239,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
     return teamUsers.length > 0 ? Math.round((uniqueAttendees / teamUsers.length) * 100) : 0;
   }, [todayAttendance, teamUsers, selectedUserFilter, filteredTodayAttendance]);
 
-  // workforceDetails lists all users with their combined attendance and work time log summaries
+  // workforceDetails lists all users with their combined attendance, leave/wfh requests, and work time log summaries
   const workforceDetails = useMemo(() => {
     return teamUsers.map(user => {
       const userRecords = todayAttendance.filter(a => a.user_id === user.id);
@@ -229,11 +251,23 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
       const wfhRecord = userRecords.find(a => a.status === 'WFH');
       const leaveRecord = userRecords.find(a => a.status === 'Leave');
 
-      let status: 'present' | 'wfh' | 'leave' | 'offline' = 'offline';
-      if (wfhRecord) {
+      const todayLeaveReq = activeLeaveReqs.find(r => r.user_id === user.id && r.start_date <= todayStr && r.end_date >= todayStr);
+
+      let status: 'present' | 'wfh' | 'leave' | 'pending_wfh' | 'pending_leave' | 'offline' = 'offline';
+      let statusNotes = '';
+
+      if (wfhRecord || (todayLeaveReq && todayLeaveReq.request_type === 'wfh' && todayLeaveReq.status === 'Approved')) {
         status = 'wfh';
-      } else if (leaveRecord) {
+        statusNotes = todayLeaveReq ? `WFH Approved: ${todayLeaveReq.reason}` : 'Work From Home';
+      } else if (leaveRecord || (todayLeaveReq && todayLeaveReq.request_type === 'leave' && todayLeaveReq.status === 'Approved')) {
         status = 'leave';
+        statusNotes = todayLeaveReq ? `Leave Approved: ${todayLeaveReq.reason}` : 'On Leave';
+      } else if (todayLeaveReq && todayLeaveReq.request_type === 'wfh' && todayLeaveReq.status === 'Pending') {
+        status = 'pending_wfh';
+        statusNotes = `⏳ WFH Pending: ${todayLeaveReq.reason}`;
+      } else if (todayLeaveReq && todayLeaveReq.request_type === 'leave' && todayLeaveReq.status === 'Pending') {
+        status = 'pending_leave';
+        statusNotes = `⏳ Leave Pending: ${todayLeaveReq.reason}`;
       } else if (activeRecord || lastCompletedRecord || userRecords.length > 0) {
         status = 'present';
       }
@@ -244,14 +278,12 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
       
       const userTodayLogs = logs.filter(l => l.userPin === user.pin && l.date === todayStr);
       
-      // Calculate minutes for project filter if active, otherwise overall
       userTodayLogs.forEach(l => {
         if (!selectedProjectFilter || l.project_id === selectedProjectFilter) {
           minutesToday += parseLogMinutes(l);
         }
       });
 
-      // Find the last task (optionally matching project filter)
       const lastLog = userTodayLogs.find(l => !selectedProjectFilter || l.project_id === selectedProjectFilter);
       if (lastLog) {
         lastTaskDesc = lastLog.description;
@@ -264,6 +296,7 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
         pin: user.pin,
         role: user.role,
         status,
+        statusNotes,
         punchIn: activeRecord ? activeRecord.punch_in : (lastCompletedRecord ? lastCompletedRecord.punch_in : null),
         punchOut: activeRecord ? null : (lastCompletedRecord ? lastCompletedRecord.punch_out : null),
         minutesToday,
@@ -271,16 +304,18 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
         lastTaskProject
       };
     });
-  }, [teamUsers, todayAttendance, logs, todayStr, selectedProjectFilter]);
+  }, [teamUsers, todayAttendance, activeLeaveReqs, logs, todayStr, selectedProjectFilter]);
 
   const filteredWorkforce = useMemo(() => {
     return workforceDetails.filter(w => {
       const matchesSearch = w.name.toLowerCase().includes(searchTerm.toLowerCase()) || w.pin.includes(searchTerm);
-      const matchesStatus = statusFilter === 'all' || w.status === statusFilter;
+      const matchesStatus = statusFilter === 'all'
+        || (statusFilter === 'wfh' && (w.status === 'wfh' || w.status === 'pending_wfh'))
+        || (statusFilter === 'leave' && (w.status === 'leave' || w.status === 'pending_leave'))
+        || w.status === statusFilter;
       const matchesGlobalFilter = !selectedUserFilter || w.pin === selectedUserFilter;
       const matchesRole = !roleFilter || w.role === roleFilter;
       
-      // Filter out users who haven't logged any time on the selected project if project filter is active
       const matchesProject = !selectedProjectFilter || logs.some(l => l.userPin === w.pin && l.date === todayStr && l.project_id === selectedProjectFilter);
       
       return matchesSearch && matchesStatus && matchesGlobalFilter && matchesProject && matchesRole;
@@ -641,15 +676,25 @@ export default function AdminDashboard({ logs, teamUsers, todayAttendance, proje
                       </span>
                     )}
                     {w.status === 'wfh' && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-extrabold text-amber-700">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-extrabold text-amber-700" title={w.statusNotes}>
                         <span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
                         WFH
                       </span>
                     )}
+                    {w.status === 'pending_wfh' && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50/80 border border-amber-300 px-2 py-0.5 text-[9px] font-extrabold text-amber-800" title={w.statusNotes}>
+                        ⏳ WFH (Pending)
+                      </span>
+                    )}
                     {w.status === 'leave' && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2 py-0.5 text-[9px] font-extrabold text-violet-700">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2 py-0.5 text-[9px] font-extrabold text-violet-700" title={w.statusNotes}>
                         <span className="h-1.5 w-1.5 rounded-full bg-violet-500"></span>
                         On Leave
+                      </span>
+                    )}
+                    {w.status === 'pending_leave' && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-violet-50/80 border border-violet-300 px-2 py-0.5 text-[9px] font-extrabold text-violet-800" title={w.statusNotes}>
+                        ⏳ Leave (Pending)
                       </span>
                     )}
                     {w.status === 'offline' && (

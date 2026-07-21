@@ -31,7 +31,7 @@ export interface ResourceAttendanceItem {
   date: string;
   punchIn: string | null;
   punchOut: string | null;
-  status: 'Present' | 'WFH' | 'Leave' | 'Absent';
+  status: 'Present' | 'WFH' | 'Leave' | 'Absent' | 'Pending WFH' | 'Pending Leave';
   notes: string;
   shiftDuration: string;
   recordId: string | null;
@@ -124,7 +124,10 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
   // Bulk Import CSV State
   const [isBulkModalOpen, setIsBulkModalOpen] = useState<boolean>(false);
 
-  // 1. Fetch attendance records and profiles
+  // Leave & WFH Applications State
+  const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
+
+  // 1. Fetch attendance records, profiles, and leave/wfh applications
   const fetchData = async () => {
     setIsLoading(true);
     setError(null);
@@ -155,6 +158,17 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
         if (rpcProfiles) setProfiles(rpcProfiles);
       } else if (profilesData) {
         setProfiles(profilesData);
+      }
+
+      // Fetch active Leave and WFH applications (Approved & Pending)
+      try {
+        const { data: reqsData } = await supabase
+          .from('leave_wfh_requests')
+          .select('*')
+          .in('status', ['Approved', 'Pending']);
+        if (reqsData) setLeaveRequests(reqsData);
+      } catch (reqErr) {
+        console.warn('Could not fetch leave/wfh requests:', reqErr);
       }
     } catch (err: unknown) {
       console.error('Error fetching attendance data:', err);
@@ -247,6 +261,25 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
     const employeeProfiles = profiles.filter(p => p.role !== 'admin');
     const todayStr = new Date().toLocaleDateString("en-CA");
 
+    const getLeaveOrWfhInfo = (userId: string, dateStr: string) => {
+      const req = leaveRequests.find(r => r.user_id === userId && r.start_date <= dateStr && r.end_date >= dateStr);
+      if (!req) return null;
+      if (req.status === 'Approved') {
+        if (req.request_type === 'wfh') {
+          return { status: 'WFH' as const, notes: `WFH Approved: ${req.reason}` };
+        } else {
+          return { status: 'Leave' as const, notes: `Leave (${req.leave_type || 'General'}) Approved: ${req.reason}` };
+        }
+      } else if (req.status === 'Pending') {
+        if (req.request_type === 'wfh') {
+          return { status: 'Pending WFH' as const, notes: `⏳ WFH Request Pending: ${req.reason}` };
+        } else {
+          return { status: 'Pending Leave' as const, notes: `⏳ Leave Request Pending (${req.leave_type || 'General'}): ${req.reason}` };
+        }
+      }
+      return null;
+    };
+
     // --- CASE A: SINGLE EMPLOYEE TRACKING MODE ---
     if (selectedUserFilter !== 'all') {
       const p = profiles.find(pr => pr.id === selectedUserFilter);
@@ -259,6 +292,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
         const targetDate = filterDate || todayStr;
         userLogs = userLogs.filter(l => l.date === targetDate);
         if (userLogs.length === 0) {
+          const leaveWfhInfo = getLeaveOrWfhInfo(p.id, targetDate);
           return [{
             id: undefined,
             userId: p.id,
@@ -268,8 +302,8 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
             date: targetDate,
             punchIn: null,
             punchOut: null,
-            status: 'Absent',
-            notes: 'Not Attended Yet',
+            status: leaveWfhInfo ? leaveWfhInfo.status : 'Absent',
+            notes: leaveWfhInfo ? leaveWfhInfo.notes : 'Not Attended Yet',
             shiftDuration: 'N/A',
             recordId: null
           }];
@@ -282,14 +316,21 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
       }
 
       return userLogs.map(log => {
-        let status: 'Present' | 'WFH' | 'Leave' | 'Absent' = 'Present';
+        let status: 'Present' | 'WFH' | 'Leave' | 'Absent' | 'Pending WFH' | 'Pending Leave' = 'Present';
         let shiftDuration = 'N/A';
         let notes = log.notes || '';
 
+        const leaveWfhInfo = getLeaveOrWfhInfo(p.id, log.date);
+
         if (log.status === 'WFH') {
           status = 'WFH';
+          if (!notes && leaveWfhInfo) notes = leaveWfhInfo.notes;
         } else if (log.status === 'Leave') {
           status = 'Leave';
+          if (!notes && leaveWfhInfo) notes = leaveWfhInfo.notes;
+        } else if (leaveWfhInfo && (!log.punch_in && !log.punch_out)) {
+          status = leaveWfhInfo.status;
+          if (!notes) notes = leaveWfhInfo.notes;
         } else if (log.punch_in || log.punch_out) {
           status = 'Present';
           shiftDuration = log.punch_out ? getShiftDuration(log.punch_in, log.punch_out) : 'In Progress';
@@ -325,25 +366,28 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
       return employeeProfiles.map(p => {
         const userLogs = userLogsGroup.get(p.id) || [];
         const primaryLog = userLogs[0] || null;
+        const leaveWfhInfo = getLeaveOrWfhInfo(p.id, targetDate);
 
-        let status: 'Present' | 'WFH' | 'Leave' | 'Absent' = 'Absent';
+        let status: 'Present' | 'WFH' | 'Leave' | 'Absent' | 'Pending WFH' | 'Pending Leave' = leaveWfhInfo ? leaveWfhInfo.status : 'Absent';
         let shiftDuration = 'N/A';
-        let notes = 'Not Attended Yet';
+        let notes = leaveWfhInfo ? leaveWfhInfo.notes : 'Not Attended Yet';
 
         if (userLogs.length > 0) {
           const notesArr = userLogs.map(l => l.notes).filter(Boolean);
-          notes = notesArr.length > 0 ? Array.from(new Set(notesArr)).join(' | ') : '';
+          if (notesArr.length > 0) {
+            notes = Array.from(new Set(notesArr)).join(' | ');
+          }
 
           const hasWFH = userLogs.some(l => l.status === 'WFH');
           const hasLeave = userLogs.some(l => l.status === 'Leave');
 
           if (hasWFH) {
             status = 'WFH';
-            if (!notes) notes = 'Work From Home';
+            if (!notes) notes = leaveWfhInfo?.notes || 'Work From Home';
           } else if (hasLeave) {
             status = 'Leave';
-            if (!notes) notes = 'On Leave';
-          } else {
+            if (!notes) notes = leaveWfhInfo?.notes || 'On Leave';
+          } else if (userLogs.some(l => l.punch_in || l.punch_out)) {
             status = 'Present';
             let totalMins = 0;
             let hasActive = false;
@@ -397,14 +441,21 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
 
     return filteredLogs.map(log => {
       const p = profilesMap.get(log.user_id);
-      let status: 'Present' | 'WFH' | 'Leave' | 'Absent' = 'Present';
+      const leaveWfhInfo = getLeaveOrWfhInfo(log.user_id, log.date);
+
+      let status: 'Present' | 'WFH' | 'Leave' | 'Absent' | 'Pending WFH' | 'Pending Leave' = 'Present';
       let shiftDuration = 'N/A';
       let notes = log.notes || '';
 
       if (log.status === 'WFH') {
         status = 'WFH';
+        if (!notes && leaveWfhInfo) notes = leaveWfhInfo.notes;
       } else if (log.status === 'Leave') {
         status = 'Leave';
+        if (!notes && leaveWfhInfo) notes = leaveWfhInfo.notes;
+      } else if (leaveWfhInfo && (!log.punch_in && !log.punch_out)) {
+        status = leaveWfhInfo.status;
+        if (!notes) notes = leaveWfhInfo.notes;
       } else if (log.punch_in || log.punch_out) {
         status = 'Present';
         shiftDuration = log.punch_out ? getShiftDuration(log.punch_in, log.punch_out) : 'In Progress';
@@ -425,7 +476,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
         recordId: log.id || null
       };
     });
-  }, [logs, profiles, filterDate, filterMonth, startDate, endDate, dateFilterMode, selectedUserFilter, isAdmin]);
+  }, [logs, profiles, leaveRequests, filterDate, filterMonth, startDate, endDate, dateFilterMode, selectedUserFilter, isAdmin]);
 
   // 3. Filtered Resource List
   const filteredResources = useMemo(() => {
@@ -456,8 +507,8 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
   const kpiMetrics = useMemo(() => {
     const total = masterResourceList.length;
     const present = masterResourceList.filter(r => r.status === 'Present').length;
-    const wfh = masterResourceList.filter(r => r.status === 'WFH').length;
-    const leave = masterResourceList.filter(r => r.status === 'Leave').length;
+    const wfh = masterResourceList.filter(r => r.status === 'WFH' || r.status === 'Pending WFH').length;
+    const leave = masterResourceList.filter(r => r.status === 'Leave' || r.status === 'Pending Leave').length;
     const absent = masterResourceList.filter(r => r.status === 'Absent').length;
     const attendanceRate = total > 0 ? Math.round(((present + wfh) / total) * 100) : 0;
 
@@ -1131,18 +1182,18 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
               />
 
               {/* Status Filter Buttons */}
-              <div className="flex bg-slate-100 p-1 rounded-xl">
-                {(['all', 'Present', 'WFH', 'Leave', 'Absent'] as const).map((st) => (
+              <div className="flex flex-wrap bg-slate-100 p-1 rounded-xl gap-0.5">
+                {(['all', 'Present', 'WFH', 'Leave', 'Pending WFH', 'Pending Leave', 'Absent'] as const).map((st) => (
                   <button
                     key={st}
                     onClick={() => setStatusFilter(st)}
-                    className={`px-2.5 py-1 rounded-lg text-[9px] font-extrabold capitalize transition-all cursor-pointer ${
+                    className={`px-2 py-1 rounded-lg text-[9px] font-extrabold capitalize transition-all cursor-pointer ${
                       statusFilter === st
                         ? "bg-white text-slate-900 shadow-sm"
                         : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    {st}
+                    {st === 'Pending WFH' ? '⏳ WFH' : st === 'Pending Leave' ? '⏳ Leave' : st}
                   </button>
                 ))}
               </div>
@@ -1180,15 +1231,34 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
                     const getStatusBadge = (st: string) => {
                       switch (st) {
                         case 'Present':
-                          return <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700">Present</span>;
+                          return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-bold text-emerald-700">Present</span>;
                         case 'WFH':
-                          return <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-700">WFH</span>;
+                          return <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2.5 py-0.5 text-xs font-black text-amber-800 shadow-xs">🏡 WFH</span>;
                         case 'Leave':
-                          return <span className="inline-flex items-center rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-bold text-violet-700">On Leave</span>;
+                          return <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 border border-violet-300 px-2.5 py-0.5 text-xs font-black text-violet-800 shadow-xs">🌴 On Leave</span>;
+                        case 'Pending WFH':
+                          return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-300 px-2 py-0.5 text-[10px] font-extrabold text-amber-900 shadow-xs">⏳ WFH (Pending)</span>;
+                        case 'Pending Leave':
+                          return <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 border border-violet-300 px-2 py-0.5 text-[10px] font-extrabold text-violet-900 shadow-xs">⏳ Leave (Pending)</span>;
                         default:
-                          return <span className="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-bold text-rose-600">Absent</span>;
+                          return <span className="inline-flex items-center rounded-full bg-rose-50 border border-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-600">Absent</span>;
                       }
                     };
+
+                    let rowStyle = 'transition-all cursor-pointer border-b border-slate-50';
+                    if (isSelected) {
+                      rowStyle += ' bg-sky-100/70 ring-2 ring-sky-400/50 shadow-sm';
+                    } else if (item.status === 'WFH') {
+                      rowStyle += ' bg-amber-50/60 hover:bg-amber-100/60 border-l-4 border-l-amber-500';
+                    } else if (item.status === 'Leave') {
+                      rowStyle += ' bg-violet-50/60 hover:bg-violet-100/60 border-l-4 border-l-violet-500';
+                    } else if (item.status === 'Pending WFH') {
+                      rowStyle += ' bg-amber-50/30 hover:bg-amber-100/40 border-l-4 border-l-amber-300';
+                    } else if (item.status === 'Pending Leave') {
+                      rowStyle += ' bg-violet-50/30 hover:bg-violet-100/40 border-l-4 border-l-violet-300';
+                    } else {
+                      rowStyle += ' hover:bg-slate-50/80';
+                    }
 
                     return (
                       <tr
@@ -1197,9 +1267,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
                           setSelectedItem(item);
                           setIsEditing(false);
                         }}
-                        className={`hover:bg-slate-50/80 transition-all cursor-pointer ${
-                          isSelected ? 'bg-sky-50/40' : ''
-                        }`}
+                        className={rowStyle}
                       >
                         <td className="py-3.5 pr-2">
                           <div className="font-bold text-slate-800 truncate max-w-[140px]">{item.userName}</div>
