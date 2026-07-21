@@ -46,6 +46,21 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [selectedItem, setSelectedItem] = useState<ResourceAttendanceItem | null>(null);
 
+  // Missing Column Migration States
+  const [isMissingColumns, setIsMissingColumns] = useState<boolean>(false);
+  const [copiedSql, setCopiedSql] = useState<boolean>(false);
+
+  const migrationSql = `-- Run this in your Supabase SQL Editor:
+ALTER TABLE public.attendance ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Present';
+ALTER TABLE public.attendance ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(migrationSql);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 3000);
+  };
+
   // Filtering state
   const [filterDate, setFilterDate] = useState<string>(() => {
     if (isAdmin) {
@@ -98,7 +113,13 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
         .select('*')
         .order('date', { ascending: false });
 
-      if (fetchError) throw fetchError;
+      if (fetchError) {
+        if (fetchError.message.includes('notes') || fetchError.message.includes('status') || fetchError.message.includes('schema cache')) {
+          setIsMissingColumns(true);
+        }
+        throw fetchError;
+      }
+      setIsMissingColumns(false);
       setLogs(logsData || []);
 
       // Fetch profiles
@@ -379,15 +400,46 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
         };
 
         if (selectedItem.recordId) {
-          const { error: updateErr } = await supabase
+          let { error: updateErr } = await supabase
             .from('attendance')
             .update(recordData)
             .eq('id', selectedItem.recordId);
+
+          if (updateErr && (updateErr.message.includes('notes') || updateErr.message.includes('status') || updateErr.message.includes('schema cache'))) {
+            const fallbackData = {
+              user_id: targetUserId,
+              date: editDate,
+              punch_in: punchInIso,
+              punch_out: editStatus === 'In Progress' ? null : punchOutIso
+            };
+            const fallbackRes = await supabase
+              .from('attendance')
+              .update(fallbackData)
+              .eq('id', selectedItem.recordId);
+            updateErr = fallbackRes.error;
+            setIsMissingColumns(true);
+          }
+
           if (updateErr) throw updateErr;
         } else {
-          const { error: insertErr } = await supabase
+          let { error: insertErr } = await supabase
             .from('attendance')
             .insert(recordData);
+
+          if (insertErr && (insertErr.message.includes('notes') || insertErr.message.includes('status') || insertErr.message.includes('schema cache'))) {
+            const fallbackData = {
+              user_id: targetUserId,
+              date: editDate,
+              punch_in: punchInIso,
+              punch_out: editStatus === 'In Progress' ? null : punchOutIso
+            };
+            const fallbackRes = await supabase
+              .from('attendance')
+              .insert(fallbackData);
+            insertErr = fallbackRes.error;
+            setIsMissingColumns(true);
+          }
+
           if (insertErr) throw insertErr;
         }
       }
@@ -398,6 +450,9 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
     } catch (err: any) {
       console.error('Error saving attendance status:', err);
       const msg = err?.message || err?.details || (typeof err === 'string' ? err : 'Failed to update attendance status.');
+      if (msg.includes('notes') || msg.includes('status') || msg.includes('schema cache')) {
+        setIsMissingColumns(true);
+      }
       setError(msg);
     } finally {
       setEditLoading(false);
@@ -433,9 +488,23 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
         notes: addNotes
       };
 
-      const { error: insertError } = await supabase
+      let { error: insertError } = await supabase
         .from('attendance')
         .insert(recordToInsert);
+
+      if (insertError && (insertError.message.includes('notes') || insertError.message.includes('status') || insertError.message.includes('schema cache'))) {
+        const fallbackRecord = {
+          user_id: targetUserId,
+          date: addDate,
+          punch_in: punchInIso,
+          punch_out: punchOutIso
+        };
+        const fallbackRes = await supabase
+          .from('attendance')
+          .insert(fallbackRecord);
+        insertError = fallbackRes.error;
+        setIsMissingColumns(true);
+      }
 
       if (insertError) throw insertError;
 
@@ -444,6 +513,9 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
     } catch (err: any) {
       console.error('Error adding attendance:', err);
       const msg = err?.message || err?.details || (typeof err === 'string' ? err : 'Failed to add attendance record.');
+      if (msg.includes('notes') || msg.includes('status') || msg.includes('schema cache')) {
+        setIsMissingColumns(true);
+      }
       setError(msg);
     } finally {
       setAddLoading(false);
@@ -658,6 +730,48 @@ export default function AttendanceExplorer({ isAdmin }: AttendanceExplorerProps)
             <span className="block text-[9px] font-extrabold uppercase tracking-wider text-rose-700">Absent</span>
             <span className="mt-1 block text-2xl font-black text-rose-700">{kpiMetrics.absent}</span>
             <span className="text-[9px] font-semibold text-rose-600">Not Attended Yet</span>
+          </div>
+        </div>
+      )}
+
+      {/* Database Schema Setup Banner if notes/status columns missing */}
+      {isMissingColumns && (
+        <div className="rounded-3xl border border-amber-200 bg-amber-50/60 p-6 space-y-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 font-bold text-lg shrink-0">
+              ⚡
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-amber-900">Supabase Database Migration Required</h3>
+              <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
+                The <code className="font-mono bg-amber-100 px-1 py-0.5 rounded text-amber-900">status</code> and <code className="font-mono bg-amber-100 px-1 py-0.5 rounded text-amber-900">notes</code> columns have not been added to your <code className="font-mono bg-amber-100 px-1 py-0.5 rounded text-amber-900">public.attendance</code> table in Supabase yet. Basic punch updates are active in fallback mode. Run the SQL script below in your <strong>Supabase SQL Editor</strong> to enable full attendance status tracking & notes.
+              </p>
+            </div>
+          </div>
+
+          <div className="relative rounded-2xl bg-slate-900 text-slate-100 p-4 font-mono text-[11px] overflow-x-auto shadow-inner">
+            <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-800">
+              <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">SQL Migration Script</span>
+              <button
+                onClick={handleCopySql}
+                className="px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                {copiedSql ? '✓ Copied to Clipboard!' : 'Copy SQL Script'}
+              </button>
+            </div>
+            <pre className="text-slate-300 leading-relaxed whitespace-pre-wrap">{migrationSql}</pre>
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              onClick={() => {
+                setIsMissingColumns(false);
+                fetchData();
+              }}
+              className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md shadow-amber-100 cursor-pointer active:scale-95 transition-all"
+            >
+              🔄 Refresh & Retry Connection
+            </button>
           </div>
         </div>
       )}
