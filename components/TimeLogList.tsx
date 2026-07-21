@@ -392,8 +392,6 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
             <option value="Support">Support / Ops</option>
             <option value="Analysis">Analysis</option>
           </select>
-          </select>
-          </select>
         </div>
 
         <div>

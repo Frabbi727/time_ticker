@@ -230,42 +230,72 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
     // If Admin viewing a specific date (or today's default view)
     if (isAdmin && targetDate) {
       const logsForDate = logs.filter(l => l.date === targetDate);
-      const userLogsMap = new Map(logsForDate.map(l => [l.user_id, l]));
+      const userLogsGroup = new Map<string, AttendanceRecord[]>();
+      logsForDate.forEach(l => {
+        const arr = userLogsGroup.get(l.user_id) || [];
+        userLogsGroup.set(l.user_id, [...arr, l]);
+      });
 
       return employeeProfiles.map(p => {
-        const log = userLogsMap.get(p.id);
+        const userLogs = userLogsGroup.get(p.id) || [];
+        const primaryLog = userLogs[0] || null;
+
         let status: 'Present' | 'WFH' | 'Leave' | 'Absent' = 'Absent';
         let shiftDuration = 'N/A';
         let notes = 'Not Attended Yet';
 
-        if (log) {
-          notes = log.notes || '';
-          if (log.status === 'WFH') {
+        if (userLogs.length > 0) {
+          const notesArr = userLogs.map(l => l.notes).filter(Boolean);
+          notes = notesArr.length > 0 ? Array.from(new Set(notesArr)).join(' | ') : '';
+
+          const hasWFH = userLogs.some(l => l.status === 'WFH');
+          const hasLeave = userLogs.some(l => l.status === 'Leave');
+
+          if (hasWFH) {
             status = 'WFH';
-            notes = notes || 'Work From Home';
-          } else if (log.status === 'Leave') {
+            if (!notes) notes = 'Work From Home';
+          } else if (hasLeave) {
             status = 'Leave';
-            notes = notes || 'On Leave';
-          } else if (log.punch_in || log.punch_out) {
+            if (!notes) notes = 'On Leave';
+          } else {
             status = 'Present';
-            shiftDuration = log.punch_out ? getShiftDuration(log.punch_in, log.punch_out) : 'In Progress';
-            notes = notes || (log.punch_out ? 'Completed Shift' : 'Punched In');
+            let totalMins = 0;
+            let hasActive = false;
+
+            userLogs.forEach(l => {
+              if (l.punch_in && l.punch_out) {
+                const diff = new Date(l.punch_out).getTime() - new Date(l.punch_in).getTime();
+                if (diff > 0) totalMins += Math.floor(diff / 60000);
+              } else if (l.punch_in && !l.punch_out) {
+                hasActive = true;
+              }
+            });
+
+            const hrs = Math.floor(totalMins / 60);
+            const mins = Math.round(totalMins % 60);
+            shiftDuration = hasActive
+              ? 'In Progress'
+              : totalMins > 0
+              ? `${hrs}h ${mins}m${userLogs.length > 1 ? ` (${userLogs.length} shifts)` : ''}`
+              : 'Completed Shift';
+
+            if (!notes) notes = hasActive ? 'Punched In' : 'Completed Shift';
           }
         }
 
         return {
-          id: log?.id,
+          id: primaryLog?.id,
           userId: p.id,
           userName: p.name,
           userPin: p.pin,
           userRole: p.role || 'employee',
           date: targetDate,
-          punchIn: log?.punch_in || null,
-          punchOut: log?.punch_out || null,
+          punchIn: primaryLog?.punch_in || null,
+          punchOut: primaryLog?.punch_out || null,
           status,
           notes,
           shiftDuration,
-          recordId: log?.id || null
+          recordId: primaryLog?.id || null
         };
       });
     }
@@ -363,6 +393,10 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
 
       let punchInIso = editPunchIn ? combineDateAndTime(editDate, editPunchIn) : null;
       let punchOutIso = editPunchOut ? combineDateAndTime(editDate, editPunchOut) : null;
+
+      if (punchInIso && punchOutIso && new Date(punchOutIso).getTime() <= new Date(punchInIso).getTime()) {
+        throw new Error("Punch Out time must be later than Punch In time.");
+      }
 
       if (editStatus === 'Present' && (!editPunchIn || !editPunchOut)) {
         // Default shift if present
@@ -478,6 +512,10 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
       let punchOutIso = addPunchOut ? combineDateAndTime(addDate, addPunchOut) : null;
 
       if (addStatus === 'In Progress') punchOutIso = null;
+
+      if (punchInIso && punchOutIso && new Date(punchOutIso).getTime() <= new Date(punchInIso).getTime()) {
+        throw new Error("Punch Out time must be later than Punch In time.");
+      }
 
       const recordToInsert: any = {
         user_id: targetUserId,

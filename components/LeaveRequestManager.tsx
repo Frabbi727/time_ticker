@@ -267,21 +267,21 @@ CREATE POLICY "Users can manage their own leave requests"
       const targetNotes = `${req.request_type.toUpperCase()} Approved: ${req.reason}`;
 
       for (const dStr of datesInRange) {
-        const { data: existing } = await supabase
+        const { data: existingList } = await supabase
           .from('attendance')
           .select('id')
           .eq('user_id', req.user_id)
-          .eq('date', dStr)
-          .maybeSingle();
+          .eq('date', dStr);
 
-        if (existing) {
+        if (existingList && existingList.length > 0) {
           await supabase
             .from('attendance')
             .update({
               status: targetStatus,
               notes: targetNotes
             })
-            .eq('id', existing.id);
+            .eq('user_id', req.user_id)
+            .eq('date', dStr);
         } else {
           await supabase
             .from('attendance')

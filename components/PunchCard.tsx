@@ -18,6 +18,7 @@ interface AttendanceRecord {
 export default function PunchCard({ userName, pin }: PunchCardProps) {
   const [todayRecords, setTodayRecords] = useState<AttendanceRecord[]>([]);
   const [history, setHistory] = useState<AttendanceRecord[]>([]);
+  const [pastUnclosedRecord, setPastUnclosedRecord] = useState<AttendanceRecord | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +82,8 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
 
       if (fetchError) throw fetchError;
       setHistory(data || []);
+      const unclosedPast = (data || []).find(r => !r.punch_out && r.date < dateStr);
+      setPastUnclosedRecord(unclosedPast || null);
     } catch (err: unknown) {
       console.error('Error fetching attendance history:', err);
     }
@@ -145,6 +148,29 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
     }
   };
 
+  // 5. Close Past Unclosed Shift Action
+  const handleClosePastShift = async (recordToClose: AttendanceRecord) => {
+    setActionLoading(true);
+    setError(null);
+    try {
+      const closeTime = new Date(`${recordToClose.date}T17:00:00`).toISOString();
+      const { error: updateErr } = await supabase
+        .from('attendance')
+        .update({ punch_out: closeTime })
+        .eq('id', recordToClose.id);
+
+      if (updateErr) throw updateErr;
+      setPastUnclosedRecord(null);
+      await fetchTodayAttendance();
+      await fetchAttendanceHistory();
+    } catch (err: unknown) {
+      console.error('Error closing past shift:', err);
+      setError('Failed to close past shift.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const formatTime = (isoString: string) => {
     return new Date(isoString).toLocaleTimeString("en-US", {
       hour: '2-digit',
@@ -184,6 +210,29 @@ export default function PunchCard({ userName, pin }: PunchCardProps) {
         </div>
       ) : (
         <div className="pt-6">
+          {/* Warning Banner for Unclosed Past Shift */}
+          {pastUnclosedRecord && (
+            <div className="mb-6 rounded-2xl bg-amber-50 border border-amber-200 p-4 space-y-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  <span className="inline-flex items-center gap-1 text-amber-800 font-extrabold text-xs">
+                    ⚠️ Open Shift Detected
+                  </span>
+                  <p className="text-[11px] font-semibold text-amber-700 mt-0.5">
+                    Unclosed shift from {pastUnclosedRecord.date}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleClosePastShift(pastUnclosedRecord)}
+                  disabled={actionLoading}
+                  className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-sm cursor-pointer active:scale-95 disabled:opacity-50"
+                >
+                  {actionLoading ? 'Closing...' : 'Close Shift (5:00 PM)'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Status Indicators */}
           {!activeRecord ? (
             <div className="space-y-6">
