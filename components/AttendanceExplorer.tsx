@@ -586,21 +586,13 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
       hour12: true
     });
 
-    // Priority Status Order: Present -> WFH -> Leave -> Absent -> Alphabetical by name
-    const statusPriority: Record<string, number> = {
-      'Present': 1,
-      'WFH': 2,
-      'Leave': 3,
-      'Absent': 4
-    };
-
+    // Sort by PIN ascending (small to big numerically: 101, 102, 103...), then by Date
     const sortedResources = [...filteredResources]
       .filter(item => item.userRole !== 'admin')
       .sort((a, b) => {
-        const pA = statusPriority[a.status] || 99;
-        const pB = statusPriority[b.status] || 99;
-        if (pA !== pB) return pA - pB;
-        return a.userName.localeCompare(b.userName);
+        const pinCompare = (a.userPin || '').localeCompare(b.userPin || '', undefined, { numeric: true, sensitivity: 'base' });
+        if (pinCompare !== 0) return pinCompare;
+        return a.date.localeCompare(b.date);
       });
 
     // Summary Section
@@ -620,7 +612,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
         `${kpiMetrics.attendanceRate}%`
       ],
       [''],
-      ['DETAILED EMPLOYEE ATTENDANCE ROSTER SHEET (SORTED BY PRESENT STATUS)']
+      ['DETAILED EMPLOYEE ATTENDANCE ROSTER SHEET (SORTED BY PIN ASCENDING)']
     ];
 
     const tableHeaders = [
