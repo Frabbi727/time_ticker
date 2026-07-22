@@ -735,6 +735,24 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
   const downloadExcelSheet = () => {
     if (filteredResources.length === 0) return;
 
+    const formatNotesForExcel = (note: string | null | undefined): string => {
+      if (!note) return '--';
+      const trimmed = note.trim();
+      const placeholders = [
+        'Not Attended Yet',
+        'Punched In',
+        'Completed Shift',
+        'Work From Home',
+        'On Leave',
+        'N/A',
+        'None'
+      ];
+      if (placeholders.includes(trimmed)) {
+        return '--';
+      }
+      return trimmed;
+    };
+
     let dateRangeStr = "All Recorded Dates";
     if (dateFilterMode === 'today' && filterDate) {
       dateRangeStr = filterDate;
@@ -761,17 +779,34 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
     let fileName = `BRAC_Attendance_Report_${dateRangeStr}.csv`;
     let csvLines: string[] = [];
 
-    if (selectedEmployeeProfile) {
-      // --- SINGLE EMPLOYEE REPORT (DETAILED VERTICAL SHEET) ---
-      fileName = `BRAC_Attendance_${selectedEmployeeProfile.name.replace(/\s+/g, '_')}_PIN_${selectedEmployeeProfile.pin}_${dateRangeStr}.csv`;
+    if (selectedEmployeeProfile || dateFilterMode === 'today') {
+      // --- DETAILED VERTICAL SHEET (SINGLE EMPLOYEE OR DAILY TEAM REPORT) ---
+      if (selectedEmployeeProfile) {
+        fileName = `BRAC_Attendance_${selectedEmployeeProfile.name.replace(/\s+/g, '_')}_PIN_${selectedEmployeeProfile.pin}_${dateRangeStr}.csv`;
+      } else {
+        fileName = `BRAC_Daily_Attendance_Report_${dateRangeStr}.csv`;
+      }
+
       const summaryRows = [
-        [`SINGLE EMPLOYEE ATTENDANCE REPORT: ${selectedEmployeeProfile.name} (PIN: ${selectedEmployeeProfile.pin})`],
-        [`ROLE: ${getRoleBadgeLabel(selectedEmployeeProfile.role)}`],
+        selectedEmployeeProfile
+          ? [`SINGLE EMPLOYEE ATTENDANCE REPORT: ${selectedEmployeeProfile.name} (PIN: ${selectedEmployeeProfile.pin})`]
+          : [`DAILY TEAM ATTENDANCE REPORT (${dateRangeStr.replace(/_/g, ' ')})`],
+        selectedEmployeeProfile
+          ? [`ROLE: ${getRoleBadgeLabel(selectedEmployeeProfile.role)}`]
+          : [`ROLE: All Augmented Resources`],
         [`FILTER DATE RANGE: ${dateRangeStr.replace(/_/g, ' ')}`],
         [`GENERATED AT: ${generatedAt}`],
         [''],
-        ['EMPLOYEE ATTENDANCE KPI SUMMARY'],
-        ['Total Tracked Days', 'Present', 'Work From Home (WFH)', 'On Leave', 'Absent', 'Total Worked Hours', 'Attendance Rate'],
+        ['ATTENDANCE KPI SUMMARY'],
+        [
+          selectedEmployeeProfile ? 'Total Tracked Days' : 'Total Employees',
+          selectedEmployeeProfile ? 'Present' : 'Present Shifts',
+          'Work From Home (WFH)',
+          'On Leave',
+          selectedEmployeeProfile ? 'Absent' : 'Absent (Unattended)',
+          selectedEmployeeProfile ? 'Total Worked Hours' : 'Total Worked Duration',
+          selectedEmployeeProfile ? 'Attendance Rate' : 'Average Attendance Rate'
+        ],
         [
           kpiMetrics.total,
           kpiMetrics.present,
@@ -806,7 +841,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
         formatTime(item.punchIn),
         formatTime(item.punchOut),
         item.shiftDuration,
-        item.notes || 'N/A'
+        formatNotesForExcel(item.notes)
       ]);
 
       csvLines = [
@@ -819,9 +854,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
       const todayStr = new Date().toLocaleDateString("en-CA");
       let datesList: string[] = [];
 
-      if (dateFilterMode === 'today') {
-        datesList = [filterDate || todayStr];
-      } else if (dateFilterMode === 'month' && filterMonth) {
+      if (dateFilterMode === 'month' && filterMonth) {
         const [yearStr, monthStr] = filterMonth.split('-');
         const year = parseInt(yearStr, 10);
         const month = parseInt(monthStr, 10) - 1;

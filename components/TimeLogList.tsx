@@ -254,7 +254,7 @@ export default function TimeLogList({ logsList, projectsList, onEdit, onLogsChan
         startTimeFmt,
         endTimeFmt,
         durationFmt,
-        log.remarks || ''
+        log.remarks || '--'
       ];
 
       if (isAdmin) {
