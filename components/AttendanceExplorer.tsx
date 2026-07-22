@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import BulkAttendanceModal from './BulkAttendanceModal';
 
@@ -255,30 +255,30 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
     }
   };
 
+  const getLeaveOrWfhInfo = useCallback((userId: string, dateStr: string) => {
+    const req = leaveRequests.find(r => r.user_id === userId && r.start_date <= dateStr && r.end_date >= dateStr);
+    if (!req) return null;
+    if (req.status === 'Approved') {
+      if (req.request_type === 'wfh') {
+        return { status: 'WFH' as const, notes: `WFH Approved: ${req.reason}` };
+      } else {
+        return { status: 'Leave' as const, notes: `Leave (${req.leave_type || 'General'}) Approved: ${req.reason}` };
+      }
+    } else if (req.status === 'Pending') {
+      if (req.request_type === 'wfh') {
+        return { status: 'Pending WFH' as const, notes: `⏳ WFH Request Pending: ${req.reason}` };
+      } else {
+        return { status: 'Pending Leave' as const, notes: `⏳ Leave Request Pending (${req.leave_type || 'General'}): ${req.reason}` };
+      }
+    }
+    return null;
+  }, [leaveRequests]);
+
   // 2. Computed Resource Attendance Master Sheet
   const masterResourceList = useMemo<ResourceAttendanceItem[]>(() => {
     const profilesMap = new Map(profiles.map(p => [p.id, p]));
     const employeeProfiles = profiles.filter(p => p.role !== 'admin');
     const todayStr = new Date().toLocaleDateString("en-CA");
-
-    const getLeaveOrWfhInfo = (userId: string, dateStr: string) => {
-      const req = leaveRequests.find(r => r.user_id === userId && r.start_date <= dateStr && r.end_date >= dateStr);
-      if (!req) return null;
-      if (req.status === 'Approved') {
-        if (req.request_type === 'wfh') {
-          return { status: 'WFH' as const, notes: `WFH Approved: ${req.reason}` };
-        } else {
-          return { status: 'Leave' as const, notes: `Leave (${req.leave_type || 'General'}) Approved: ${req.reason}` };
-        }
-      } else if (req.status === 'Pending') {
-        if (req.request_type === 'wfh') {
-          return { status: 'Pending WFH' as const, notes: `⏳ WFH Request Pending: ${req.reason}` };
-        } else {
-          return { status: 'Pending Leave' as const, notes: `⏳ Leave Request Pending (${req.leave_type || 'General'}): ${req.reason}` };
-        }
-      }
-      return null;
-    };
 
     // --- CASE A: SINGLE EMPLOYEE TRACKING MODE ---
     if (selectedUserFilter !== 'all') {
@@ -476,7 +476,7 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
         recordId: log.id || null
       };
     });
-  }, [logs, profiles, leaveRequests, filterDate, filterMonth, startDate, endDate, dateFilterMode, selectedUserFilter, isAdmin]);
+  }, [logs, profiles, getLeaveOrWfhInfo, filterDate, filterMonth, startDate, endDate, dateFilterMode, selectedUserFilter, isAdmin]);
 
   // 3. Filtered Resource List
   const filteredResources = useMemo(() => {
@@ -758,12 +758,13 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
       hour12: true
     });
 
-    let summaryRows: (string | number)[][] = [];
     let fileName = `BRAC_Attendance_Report_${dateRangeStr}.csv`;
+    let csvLines: string[] = [];
 
     if (selectedEmployeeProfile) {
+      // --- SINGLE EMPLOYEE REPORT (DETAILED VERTICAL SHEET) ---
       fileName = `BRAC_Attendance_${selectedEmployeeProfile.name.replace(/\s+/g, '_')}_PIN_${selectedEmployeeProfile.pin}_${dateRangeStr}.csv`;
-      summaryRows = [
+      const summaryRows = [
         [`SINGLE EMPLOYEE ATTENDANCE REPORT: ${selectedEmployeeProfile.name} (PIN: ${selectedEmployeeProfile.pin})`],
         [`ROLE: ${getRoleBadgeLabel(selectedEmployeeProfile.role)}`],
         [`FILTER DATE RANGE: ${dateRangeStr.replace(/_/g, ' ')}`],
@@ -783,58 +784,139 @@ ALTER TABLE public.attendance ALTER COLUMN punch_in DROP NOT NULL;`;
         [''],
         ['DETAILED DAILY ATTENDANCE BREAKDOWN SHEET']
       ];
+
+      const tableHeaders = [
+        'Employee Name',
+        'PIN',
+        'Date',
+        'Day of Week',
+        'Status',
+        'Punch In Time',
+        'Punch Out Time',
+        'Total Worked Duration',
+        'Notes / Remarks'
+      ];
+
+      const dataRows = filteredResources.map(item => [
+        item.userName,
+        item.userPin,
+        item.date,
+        getDayName(item.date),
+        item.status,
+        formatTime(item.punchIn),
+        formatTime(item.punchOut),
+        item.shiftDuration,
+        item.notes || 'N/A'
+      ]);
+
+      csvLines = [
+        ...summaryRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')),
+        tableHeaders.map(v => `"${v.replace(/"/g, '""')}"`).join(','),
+        ...dataRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+      ];
     } else {
-      summaryRows = [
+      // --- ALL EMPLOYEES ROSTER REPORT (DATE-WISE HORIZONTAL SHEET) ---
+      const todayStr = new Date().toLocaleDateString("en-CA");
+      let datesList: string[] = [];
+
+      if (dateFilterMode === 'today') {
+        datesList = [filterDate || todayStr];
+      } else if (dateFilterMode === 'month' && filterMonth) {
+        const [yearStr, monthStr] = filterMonth.split('-');
+        const year = parseInt(yearStr, 10);
+        const month = parseInt(monthStr, 10) - 1;
+        const numDays = new Date(year, month + 1, 0).getDate();
+        for (let d = 1; d <= numDays; d++) {
+          const dayStr = String(d).padStart(2, '0');
+          datesList.push(`${yearStr}-${monthStr}-${dayStr}`);
+        }
+      } else if (dateFilterMode === 'range' && (startDate || endDate)) {
+        if (startDate && endDate) {
+          const current = new Date(startDate + 'T00:00:00');
+          const end = new Date(endDate + 'T00:00:00');
+          let safety = 0;
+          while (current <= end && safety < 366) {
+            datesList.push(current.toLocaleDateString("en-CA"));
+            current.setDate(current.getDate() + 1);
+            safety++;
+          }
+        } else {
+          const uniqueDates = Array.from(new Set(filteredResources.map(r => r.date).filter(Boolean)));
+          uniqueDates.sort();
+          datesList = uniqueDates;
+        }
+      } else {
+        const uniqueDates = Array.from(new Set(filteredResources.map(r => r.date).filter(Boolean)));
+        uniqueDates.sort();
+        datesList = uniqueDates;
+      }
+
+      const summaryRows = [
         ['Attendance Sheet for BRAC IT Augmented Resources at BRAC'],
         [`FILTER DATE RANGE: ${dateRangeStr.replace(/_/g, ' ')}`],
         [`GENERATED AT: ${generatedAt}`],
         [''],
         ['KPI SUMMARY'],
-        ['Total Team Size / Days', 'Present', 'Work From Home (WFH)', 'On Leave', 'Absent (Not Attended)', 'Attendance Rate'],
+        ['Total Team Size', 'Present Shifts', 'Work From Home (WFH)', 'On Leave', 'Absent Days (Unattended)', 'Average Attendance Rate'],
         [
-          kpiMetrics.total,
-          kpiMetrics.present,
-          kpiMetrics.wfh,
-          kpiMetrics.leave,
-          kpiMetrics.absent,
+          profiles.filter(p => p.role !== 'admin').length,
+          filteredResources.filter(r => r.status === 'Present').length,
+          filteredResources.filter(r => r.status === 'WFH' || r.status === 'Pending WFH').length,
+          filteredResources.filter(r => r.status === 'Leave' || r.status === 'Pending Leave').length,
+          filteredResources.filter(r => r.status === 'Absent').length,
           `${kpiMetrics.attendanceRate}%`
         ],
         [''],
-        ['DETAILED EMPLOYEE ATTENDANCE ROSTER SHEET']
+        ['DETAILED EMPLOYEE ATTENDANCE ROSTER SHEET (DATE-WISE)']
+      ];
+
+      const tableHeaders = [
+        'Employee Name',
+        'PIN',
+        ...datesList.map(dateStr => `${dateStr} (${getDayName(dateStr).slice(0, 3)})`)
+      ];
+
+      const employeeProfiles = profiles.filter(p => p.role !== 'admin');
+
+      const getDailyStatusForUser = (userId: string, dateStr: string) => {
+        const userLogs = logs.filter(l => l.user_id === userId && l.date === dateStr);
+        const leaveWfhInfo = getLeaveOrWfhInfo(userId, dateStr);
+
+        if (userLogs.length > 0) {
+          const hasWFH = userLogs.some(l => l.status === 'WFH');
+          const hasLeave = userLogs.some(l => l.status === 'Leave');
+
+          if (hasWFH) return 'WFH';
+          if (hasLeave) return 'Leave';
+          return 'Present';
+        } else {
+          if (leaveWfhInfo) return leaveWfhInfo.status;
+          return 'Absent';
+        }
+      };
+
+      const dataRows = employeeProfiles.map(emp => {
+        const dateCells = datesList.map(dateStr => {
+          const status = getDailyStatusForUser(emp.id, dateStr);
+          return status;
+        });
+
+        return [
+          emp.name,
+          emp.pin,
+          ...dateCells
+        ];
+      });
+
+      csvLines = [
+        ...summaryRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')),
+        tableHeaders.map(v => `"${v.replace(/"/g, '""')}"`).join(','),
+        ...dataRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
       ];
     }
 
-    const tableHeaders = [
-      'Employee Name',
-      'PIN',
-      'Date',
-      'Day of Week',
-      'Status',
-      'Punch In Time',
-      'Punch Out Time',
-      'Total Worked Duration',
-      'Notes / Remarks'
-    ];
-
-    const dataRows = filteredResources.map(item => [
-      item.userName,
-      item.userPin,
-      item.date,
-      getDayName(item.date),
-      item.status,
-      formatTime(item.punchIn),
-      formatTime(item.punchOut),
-      item.shiftDuration,
-      item.notes || 'N/A'
-    ]);
-
-    const csvLines = [
-      ...summaryRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')),
-      tableHeaders.map(v => `"${v.replace(/"/g, '""')}"`).join(','),
-      ...dataRows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
-    ].join('\n');
-
-    const blob = new Blob(['\uFEFF' + csvLines], { type: 'text/csv;charset=utf-8;' });
+    const csvContent = csvLines.join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
